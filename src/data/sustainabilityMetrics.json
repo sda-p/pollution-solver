@@ -1,0 +1,22 @@
+{
+  "car": {
+    "avg_co2_per_km": 0.21,
+    "avg_speed_kmh": 50,
+    "calories_per_km": 0
+  },
+  "bus": {
+    "avg_co2_per_km": 0.08,
+    "avg_speed_kmh": 40,
+    "calories_per_km": 0
+  },
+  "bike": {
+    "avg_co2_per_km": 0,
+    "avg_speed_kmh": 18,
+    "calories_per_km": 30
+  },
+  "walk": {
+    "avg_co2_per_km": 0,
+    "avg_speed_kmh": 5,
+    "calories_per_km": 60
+  }
+}
