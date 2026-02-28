@@ -1,3 +1,4 @@
+console.log("pollution-solver service started");
 import express from 'express';
 import cors from 'cors';
 

@@ -8,6 +8,12 @@
     "dev:frontend": "cd frontend && npm run dev",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "db:ingest": "python3 scripts/ingest_datasets.py",
+    "db:test": "python3 scripts/test_queries.py",
     "build": "cd frontend && npm run build",
     "preview": "cd frontend && npm run preview",
     "test": "node --test",
@@ -26,6 +32,9 @@
     "url": "https://github.com/sda-p/pollution-solver/issues"
   },
   "homepage": "https://github.com/sda-p/pollution-solver#readme",
+  "dependencies": {
+    "pg": "^8.16.3"
+  },
   "devDependencies": {
     "eslint": "^10.0.2",
     "prettier": "^3.8.1"
