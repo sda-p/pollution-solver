@@ -853,7 +853,7 @@ function App() {
           showAtmosphere={true}
           atmosphereColor="#a0d8ff"
           atmosphereAltitude={0.25}
-          pointsData={pointsData}
+          pointsData={[]}
           pointLat={d => d.lat}
           pointLng={d => d.lng}
           pointColor={d => d.color || '#ff4444'}
