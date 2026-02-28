@@ -37,7 +37,7 @@ const getCountryColor = (countryName) => {
     <div style={{ width: '100vw', height: '100vh', background: '#000' }}>
       <Globe
         globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-        backgroundImageUrl="/background-grid-10.png"
+        backgroundImageUrl="/black.jpg"
 
         // Pollution points
         pointsData={pointsData}
