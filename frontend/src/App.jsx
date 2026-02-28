@@ -13,13 +13,16 @@ const ABERDEEN_CENTER = {
   lat: (ABERDEEN_BOUNDS.south + ABERDEEN_BOUNDS.north) / 2,
   lng: (ABERDEEN_BOUNDS.west + ABERDEEN_BOUNDS.east) / 2
 };
-const OSM_ZOOM_ALTITUDE_THRESHOLD = 0.9;
-const OSM_ABERDEEN_MAX_DISTANCE_DEG = 8;
+const OSM_ZOOM_ALTITUDE_THRESHOLD = 1.8;
 const OSM_LOD_LEVELS = [
-  { lod: 'coarse', maxRefineAltitude: 0.64, pixelSize: 1536 },
-  { lod: 'medium', maxRefineAltitude: 0.34, pixelSize: 1536 },
-  { lod: 'fine', maxRefineAltitude: 0.0, pixelSize: 2048 }
+  { lod: 'coarse', maxRefineAltitude: 1.25, pixelSize: 1536 },
+  { lod: 'medium', maxRefineAltitude: 1.12, pixelSize: 1536 },
+  { lod: 'fine', maxRefineAltitude: 0.05, pixelSize: 2048 }
 ];
+const NEXT_LEVEL_CENTER_TRIGGER_FACTOR = 1.15;
+const TOP_CHUNK_WIDTH_DEG = ABERDEEN_BOUNDS.east - ABERDEEN_BOUNDS.west;
+const TOP_CHUNK_HEIGHT_DEG = ABERDEEN_BOUNDS.north - ABERDEEN_BOUNDS.south;
+const OSM_ABERDEEN_MAX_DISTANCE_DEG = 14;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -57,16 +60,8 @@ const decodeRgbaTexture = image => {
   return texture;
 };
 
-const pointInsideInnerQuarter = (lat, lng, chunk) => {
-  const latMargin = chunk.heightDeg * 0.25;
-  const lngMargin = chunk.widthDeg * 0.25;
-  return (
-    lat >= chunk.south + latMargin &&
-    lat <= chunk.north - latMargin &&
-    lng >= chunk.west + lngMargin &&
-    lng <= chunk.east - lngMargin
-  );
-};
+const chunkCenterDistanceDeg = (lat, lng, chunk) =>
+  angularDistanceDeg(lat, lng, (chunk.south + chunk.north) / 2, (chunk.west + chunk.east) / 2);
 
 const subdivideChunk = chunk => {
   const midLat = (chunk.south + chunk.north) / 2;
@@ -100,19 +95,34 @@ const mapWithConcurrency = async (items, limit, worker) => {
   return results;
 };
 
-const buildAberdeenChunkSpecs = pov => {
+const parseTopChunkKey = key => {
+  const [x, y] = String(key || '').split(':').map(Number);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+};
+
+const topChunkBounds = ({ x, y }) => {
+  const west = ABERDEEN_BOUNDS.west + x * TOP_CHUNK_WIDTH_DEG;
+  const east = west + TOP_CHUNK_WIDTH_DEG;
+  const south = ABERDEEN_BOUNDS.south + y * TOP_CHUNK_HEIGHT_DEG;
+  const north = south + TOP_CHUNK_HEIGHT_DEG;
+  if (west < -180 || east > 180 || south < -90 || north > 90) return null;
+  return { west, east, south, north };
+};
+
+const buildChunkSpecsFromTopChunks = (topChunkKeys, pov) => {
   const lat = Number.isFinite(pov?.lat) ? pov.lat : ABERDEEN_CENTER.lat;
   const lng = Number.isFinite(pov?.lng) ? pov.lng : ABERDEEN_CENTER.lng;
   const altitude = Number.isFinite(pov?.altitude) ? pov.altitude : 2.5;
   const specs = [];
 
-  const visit = (chunk, depth, path) => {
+  const visit = (chunk, depth, pathPrefix, topKey) => {
     const level = OSM_LOD_LEVELS[depth];
     const widthDeg = chunk.east - chunk.west;
     const heightDeg = chunk.north - chunk.south;
     const withMeta = {
       ...chunk,
-      path,
+      path: pathPrefix,
       lod: level.lod,
       pixelSize: level.pixelSize,
       widthDeg,
@@ -122,25 +132,42 @@ const buildAberdeenChunkSpecs = pov => {
     };
 
     const hasChildLevel = depth < OSM_LOD_LEVELS.length - 1;
+    const childChunks = hasChildLevel ? subdivideChunk(chunk) : [];
+    const childHalfDiagonalDeg = hasChildLevel
+      ? Math.sqrt(
+          ((childChunks[0].north - childChunks[0].south) / 2) ** 2 +
+            ((childChunks[0].east - childChunks[0].west) / 2) ** 2
+        )
+      : 0;
+    const nearestChildCenterDeg = hasChildLevel
+      ? Math.min(...childChunks.map(child => chunkCenterDistanceDeg(lat, lng, child)))
+      : Number.POSITIVE_INFINITY;
     const shouldRefine =
       hasChildLevel &&
       altitude <= level.maxRefineAltitude &&
-      pointInsideInnerQuarter(lat, lng, withMeta);
+      nearestChildCenterDeg <= childHalfDiagonalDeg * NEXT_LEVEL_CENTER_TRIGGER_FACTOR;
 
     if (!shouldRefine) {
       specs.push({
         ...withMeta,
-        key: `${withMeta.lod}:${path}`
+        key: `${withMeta.lod}:${topKey}:${pathPrefix}`
       });
       return;
     }
 
-    subdivideChunk(chunk).forEach(child => {
-      visit(child, depth + 1, `${path}.${child.suffix}`);
+    childChunks.forEach(child => {
+      visit(child, depth + 1, `${pathPrefix}.${child.suffix}`, topKey);
     });
   };
 
-  visit(ABERDEEN_BOUNDS, 0, 'root');
+  topChunkKeys.forEach(topKey => {
+    const parsed = parseTopChunkKey(topKey);
+    if (!parsed) return;
+    const bounds = topChunkBounds(parsed);
+    if (!bounds) return;
+    visit(bounds, 0, 'root', topKey);
+  });
+
   return specs;
 };
 
@@ -382,7 +409,9 @@ function App() {
     const lat = Number.isFinite(pov?.lat) ? pov.lat : 0;
     const lng = Number.isFinite(pov?.lng) ? pov.lng : 0;
     const active = shouldShowAberdeenOverlay(pov);
-    const specs = active ? buildAberdeenChunkSpecs(pov) : [];
+    const specs = active
+      ? buildChunkSpecsFromTopChunks(['0:0'], pov)
+      : [];
 
     setOsmDebug(prev => ({
       ...prev,
@@ -462,11 +491,11 @@ function App() {
       ...ABERDEEN_BOUNDS,
       lod: 'coarse',
       pixelSize: OSM_LOD_LEVELS[0].pixelSize,
-      widthDeg: ABERDEEN_BOUNDS.east - ABERDEEN_BOUNDS.west,
-      heightDeg: ABERDEEN_BOUNDS.north - ABERDEEN_BOUNDS.south,
+      widthDeg: TOP_CHUNK_WIDTH_DEG,
+      heightDeg: TOP_CHUNK_HEIGHT_DEG,
       lat: ABERDEEN_CENTER.lat,
       lng: ABERDEEN_CENTER.lng,
-      key: 'coarse:root',
+      key: 'coarse:0:0:root',
       path: 'root'
     };
 
@@ -565,6 +594,7 @@ function App() {
         tileHeight={tile => tile.heightDeg}
         tileAltitude={() => 0.0012}
         tileMaterial={tile => tile.material}
+        tilesTransitionDuration={0}
         tileTransitionDuration={0}
         tileCurvatureResolution={1}
 
