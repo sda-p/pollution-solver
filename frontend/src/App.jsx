@@ -64,6 +64,7 @@ function App() {
   const osmRequestTokenRef = useRef(0);
   const [insights, setInsights] = useState([]);
   const [carbonBitmap, setCarbonBitmap] = useState(null);
+  const [cameraAltitude, setCameraAltitude] = useState(2.5);
   const [osmTiles, setOsmTiles] = useState([]);
   const [osmDebug, setOsmDebug] = useState({
     altitude: 2.5,
@@ -85,6 +86,26 @@ function App() {
     const a = Number.isFinite(altitude) ? altitude : 2.5;
     const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
     return 0.08 + 0.74 * t;
+  };
+
+  const borderOpacityFromAltitude = altitude => {
+    const a = Number.isFinite(altitude) ? altitude : 2.5;
+    const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
+    return 0.05 + 0.6 * t;
+  };
+
+  const polygonAltitudeFromCamera = altitude => {
+    const a = Number.isFinite(altitude) ? altitude : 2.5;
+    const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
+    return 0.0002 + 0.0018 * t;
+  };
+
+  const updateCameraAltitudeFromPov = pov => {
+    if (Number.isFinite(pov?.altitude)) {
+      setCameraAltitude(pov.altitude);
+      return pov.altitude;
+    }
+    return cameraAltitude;
   };
 
   // Load country-level pollution insights from backend
@@ -366,12 +387,12 @@ function App() {
         // CarbonMonitor pixel bitmap overlay
         customLayerData={carbonOverlayData}
         customThreeObject={layer => {
-          const radius = (globeRef.current?.getGlobeRadius?.() || 100) * 1.0025;
+          const radius = (globeRef.current?.getGlobeRadius?.() || 100) * 1.0008;
           const geometry = new THREE.SphereGeometry(radius, 96, 96);
           const material = new THREE.MeshBasicMaterial({
             map: layer.texture,
             transparent: true,
-            opacity: overlayOpacityFromAltitude(),
+            opacity: overlayOpacityFromAltitude(cameraAltitude),
             depthWrite: false,
             side: THREE.DoubleSide
           });
@@ -382,14 +403,16 @@ function App() {
         }}
         onGlobeReady={() => {
           const pov = globeRef.current?.pointOfView?.();
+          const altitude = updateCameraAltitudeFromPov(pov);
           if (carbonOverlayMaterialRef.current) {
-            carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(pov?.altitude);
+            carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
           }
           scheduleOsmOverlayUpdate(pov);
         }}
         onZoom={pov => {
+          const altitude = updateCameraAltitudeFromPov(pov);
           if (carbonOverlayMaterialRef.current) {
-            carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(pov?.altitude);
+            carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
           }
           scheduleOsmOverlayUpdate(pov);
         }}
@@ -406,17 +429,17 @@ function App() {
         tileLng={tile => tile.lng}
         tileWidth={tile => tile.widthDeg}
         tileHeight={tile => tile.heightDeg}
-        tileAltitude={() => 0.004}
+        tileAltitude={() => 0.0012}
         tileMaterial={tile => tile.material}
         tileCurvatureResolution={1}
 
         // === NEW: Country polygons + borders ===
         polygonsData={countries}
         polygonGeoJsonGeometry={d => d.geometry}
-        polygonCapColor={() => 'rgba(255,255,255,0.1)'}   // semi-transparent fill
-        polygonSideColor={() => 'rgba(255,255,255,0.3)'}  // sides
-        polygonStrokeColor={() => '#ffffff'}              // white borders (visible!)
-        polygonAltitude={0.01}                            // slight lift so borders pop
+        polygonCapColor={() => `rgba(255,255,255,${(borderOpacityFromAltitude(cameraAltitude) * 0.25).toFixed(3)})`}
+        polygonSideColor={() => `rgba(255,255,255,${(borderOpacityFromAltitude(cameraAltitude) * 0.45).toFixed(3)})`}
+        polygonStrokeColor={() => `rgba(255,255,255,${borderOpacityFromAltitude(cameraAltitude).toFixed(3)})`}
+        polygonAltitude={polygonAltitudeFromCamera(cameraAltitude)}
         polygonLabel={d => `<b>${d.properties.NAME}</b>`} // hover tooltip
 
         // === Interactivity ===
