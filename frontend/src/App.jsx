@@ -4,10 +4,17 @@ import * as THREE from 'three';
 
 function App() {
   const globeRef = useRef();
+  const carbonOverlayMaterialRef = useRef(null);
   const [insights, setInsights] = useState([]);
   const [carbonBitmap, setCarbonBitmap] = useState(null);
   const [countries, setCountries] = useState([]);
   const [countriesByIso3, setCountriesByIso3] = useState(new Map());
+
+  const overlayOpacityFromAltitude = altitude => {
+    const a = Number.isFinite(altitude) ? altitude : 2.5;
+    const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
+    return 0.08 + 0.74 * t;
+  };
 
   // Load country-level pollution insights from backend
   useEffect(() => {
@@ -125,8 +132,9 @@ function App() {
     texture.needsUpdate = true;
     texture.flipY = true;
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
 
     return [{ texture }];
   }, [carbonBitmap]);
@@ -165,13 +173,25 @@ function App() {
           const material = new THREE.MeshBasicMaterial({
             map: layer.texture,
             transparent: true,
-            opacity: 0.82,
+            opacity: overlayOpacityFromAltitude(),
             depthWrite: false,
             side: THREE.DoubleSide
           });
+          carbonOverlayMaterialRef.current = material;
           const mesh = new THREE.Mesh(geometry, material);
           mesh.rotation.y = -Math.PI / 2;
           return mesh;
+        }}
+        onGlobeReady={() => {
+          const pov = globeRef.current?.pointOfView?.();
+          if (carbonOverlayMaterialRef.current) {
+            carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(pov?.altitude);
+          }
+        }}
+        onZoom={pov => {
+          if (carbonOverlayMaterialRef.current) {
+            carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(pov?.altitude);
+          }
         }}
 
         // === NEW: Country polygons + borders ===
