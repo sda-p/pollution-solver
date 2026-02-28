@@ -1,12 +1,83 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
+import { API_BASE_URL, fetchOsmChunk } from './services/mobilityApi';
+
+const ABERDEEN_OSM_TILE = {
+  key: 'aberdeen:prerender:fine',
+  lod: 'fine',
+  south: 56.85,
+  west: -2.62,
+  north: 57.42,
+  east: -1.72,
+  lat: (56.85 + 57.42) / 2,
+  lng: (-2.62 + -1.72) / 2,
+  widthDeg: 0.9,
+  heightDeg: 0.57
+};
+const OSM_ZOOM_ALTITUDE_THRESHOLD = 0.9;
+const OSM_ABERDEEN_MAX_DISTANCE_DEG = 8;
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const angularDistanceDeg = (lat1, lng1, lat2, lng2) => {
+  const toRad = deg => (deg * Math.PI) / 180;
+  const a1 = toRad(lat1);
+  const b1 = toRad(lng1);
+  const a2 = toRad(lat2);
+  const b2 = toRad(lng2);
+  const cosValue =
+    Math.sin(a1) * Math.sin(a2) + Math.cos(a1) * Math.cos(a2) * Math.cos(b2 - b1);
+  return (Math.acos(clamp(cosValue, -1, 1)) * 180) / Math.PI;
+};
+
+const decodeRgbaTexture = image => {
+  if (!image?.rgbaBase64 || !image?.width || !image?.height) return null;
+  const raw = atob(image.rgbaBase64);
+  const bytes = new Uint8ClampedArray(raw.length);
+  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.putImageData(new ImageData(bytes, image.width, image.height), 0, 0);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  texture.flipY = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  return texture;
+};
+
 
 function App() {
   const globeRef = useRef();
   const carbonOverlayMaterialRef = useRef(null);
+  const osmTileCacheRef = useRef(null);
+  const osmTilePendingRef = useRef(null);
+  const osmUpdateTimerRef = useRef(null);
+  const osmRequestTokenRef = useRef(0);
   const [insights, setInsights] = useState([]);
   const [carbonBitmap, setCarbonBitmap] = useState(null);
+  const [osmTiles, setOsmTiles] = useState([]);
+  const [osmDebug, setOsmDebug] = useState({
+    altitude: 2.5,
+    lat: 0,
+    lng: 0,
+    requested: 0,
+    visible: 0,
+    cacheReady: false,
+    fetchMs: 0,
+    loading: false,
+    failed: 0,
+    error: '',
+    active: false
+  });
   const [countries, setCountries] = useState([]);
   const [countriesByIso3, setCountriesByIso3] = useState(new Map());
 
@@ -18,7 +89,7 @@ function App() {
 
   // Load country-level pollution insights from backend
   useEffect(() => {
-    fetch('http://localhost:3001/insights')
+    fetch(`${API_BASE_URL}/insights`)
       .then(res => res.json())
       .then(data => setInsights(data.pollutionPoints || []))
       .catch(() => setInsights([]));
@@ -26,7 +97,7 @@ function App() {
 
   // Load CarbonMonitor rasterized emissions
   useEffect(() => {
-    fetch('http://localhost:3001/insights/carbon-monitor?stride=8&percentile=99.3')
+    fetch(`${API_BASE_URL}/insights/carbon-monitor?stride=8&percentile=99.3`)
       .then(res => res.json())
       .then(data => setCarbonBitmap(data.image || null))
       .catch(() => setCarbonBitmap(null));
@@ -115,28 +186,9 @@ function App() {
   }, [insights, countriesByIso3]);
 
   const carbonOverlayData = useMemo(() => {
-    if (!carbonBitmap?.rgbaBase64 || !carbonBitmap?.width || !carbonBitmap?.height) return [];
-
-    const raw = atob(carbonBitmap.rgbaBase64);
-    const bytes = new Uint8ClampedArray(raw.length);
-    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
-
-    const canvas = document.createElement('canvas');
-    canvas.width = carbonBitmap.width;
-    canvas.height = carbonBitmap.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return [];
-    ctx.putImageData(new ImageData(bytes, carbonBitmap.width, carbonBitmap.height), 0, 0);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.needsUpdate = true;
-    texture.flipY = true;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.minFilter = THREE.NearestFilter;
-    texture.magFilter = THREE.NearestFilter;
-    texture.generateMipmaps = false;
-
-    return [{ texture }];
+    const texture = decodeRgbaTexture(carbonBitmap);
+    if (!texture) return [];
+    return [{ texture, layerType: 'carbon-overlay' }];
   }, [carbonBitmap]);
 
   useEffect(() => {
@@ -144,6 +196,152 @@ function App() {
       carbonOverlayData.forEach(layer => layer.texture?.dispose?.());
     };
   }, [carbonOverlayData]);
+
+  useEffect(() => {
+    return () => {
+      if (osmUpdateTimerRef.current) clearTimeout(osmUpdateTimerRef.current);
+      const tile = osmTileCacheRef.current;
+      tile?.texture?.dispose?.();
+      tile?.material?.dispose?.();
+    };
+  }, []);
+
+  const shouldShowAberdeenOverlay = pov => {
+    const altitude = Number.isFinite(pov?.altitude) ? pov.altitude : 2.5;
+    if (altitude > OSM_ZOOM_ALTITUDE_THRESHOLD) return false;
+    const lat = Number.isFinite(pov?.lat) ? pov.lat : 0;
+    const lng = Number.isFinite(pov?.lng) ? pov.lng : 0;
+    const distance = angularDistanceDeg(lat, lng, ABERDEEN_OSM_TILE.lat, ABERDEEN_OSM_TILE.lng);
+    return distance <= OSM_ABERDEEN_MAX_DISTANCE_DEG;
+  };
+
+  const ensureAberdeenTileLoaded = async () => {
+    if (osmTileCacheRef.current?.material && osmTileCacheRef.current?.texture) {
+      return osmTileCacheRef.current;
+    }
+    if (osmTilePendingRef.current) return osmTilePendingRef.current;
+
+    const promise = fetchOsmChunk({
+      south: ABERDEEN_OSM_TILE.south,
+      west: ABERDEEN_OSM_TILE.west,
+      north: ABERDEEN_OSM_TILE.north,
+      east: ABERDEEN_OSM_TILE.east,
+      lod: ABERDEEN_OSM_TILE.lod,
+      pixelSize: 4086
+    }).then(payload => {
+      const texture = decodeRgbaTexture(payload.image);
+      if (!texture) throw new Error('Invalid OSM Aberdeen prerender image');
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        opacity: 0.9,
+        alphaTest: 0.02,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      const tile = {
+        ...ABERDEEN_OSM_TILE,
+        layerType: 'osm-tile',
+        texture,
+        material
+      };
+      osmTileCacheRef.current = tile;
+      return tile;
+    });
+
+    osmTilePendingRef.current = promise;
+    try {
+      return await promise;
+    } finally {
+      osmTilePendingRef.current = null;
+    }
+  };
+
+  const updateOsmOverlayForPov = pov => {
+    const token = osmRequestTokenRef.current + 1;
+    osmRequestTokenRef.current = token;
+    const altitude = Number.isFinite(pov?.altitude) ? pov.altitude : 2.5;
+    const lat = Number.isFinite(pov?.lat) ? pov.lat : 0;
+    const lng = Number.isFinite(pov?.lng) ? pov.lng : 0;
+    const active = shouldShowAberdeenOverlay(pov);
+
+    setOsmDebug(prev => ({
+      ...prev,
+      altitude,
+      lat,
+      lng,
+      requested: active ? 1 : 0,
+      visible: active && osmTileCacheRef.current ? 1 : 0,
+      active,
+      error: ''
+    }));
+
+    if (!active) {
+      setOsmTiles([]);
+      setOsmDebug(prev => ({
+        ...prev,
+        loading: false
+      }));
+      return;
+    }
+
+    const startedAt = performance.now();
+    setOsmDebug(prev => ({ ...prev, loading: true }));
+    ensureAberdeenTileLoaded()
+      .then(tile => {
+        if (token !== osmRequestTokenRef.current) return;
+        setOsmTiles([tile]);
+        setOsmDebug(prev => ({
+          ...prev,
+          visible: 1,
+          cacheReady: true,
+          fetchMs: Math.round(performance.now() - startedAt),
+          loading: false,
+          failed: 0
+        }));
+      })
+      .catch(error => {
+        if (token !== osmRequestTokenRef.current) return;
+        setOsmTiles([]);
+        setOsmDebug(prev => ({
+          ...prev,
+          visible: 0,
+          fetchMs: Math.round(performance.now() - startedAt),
+          loading: false,
+          failed: 1,
+          cacheReady: false,
+          error: error?.message || 'unknown OSM chunk load error'
+        }));
+      });
+  };
+
+  useEffect(() => {
+    const startedAt = performance.now();
+    ensureAberdeenTileLoaded()
+      .then(() => {
+        setOsmDebug(prev => ({
+          ...prev,
+          cacheReady: true,
+          fetchMs: Math.round(performance.now() - startedAt),
+          failed: 0
+        }));
+      })
+      .catch(error => {
+        setOsmDebug(prev => ({
+          ...prev,
+          cacheReady: false,
+          failed: 1,
+          error: error?.message || 'failed to pre-render Aberdeen OSM tile'
+        }));
+      });
+  }, []);
+
+  const scheduleOsmOverlayUpdate = pov => {
+    if (osmUpdateTimerRef.current) clearTimeout(osmUpdateTimerRef.current);
+    osmUpdateTimerRef.current = setTimeout(() => {
+      updateOsmOverlayForPov(pov);
+    }, 160);
+  };
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#000' }}>
@@ -187,12 +385,30 @@ function App() {
           if (carbonOverlayMaterialRef.current) {
             carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(pov?.altitude);
           }
+          scheduleOsmOverlayUpdate(pov);
         }}
         onZoom={pov => {
           if (carbonOverlayMaterialRef.current) {
             carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(pov?.altitude);
           }
+          scheduleOsmOverlayUpdate(pov);
         }}
+        pointerEventsFilter={(obj, data) => {
+          void obj;
+          if (data?.layerType === 'osm-tile') return false;
+          if (data?.layerType === 'carbon-overlay') return false;
+          return true;
+        }}
+
+        // OSM LoD chunk overlay
+        tilesData={osmTiles}
+        tileLat={tile => tile.lat}
+        tileLng={tile => tile.lng}
+        tileWidth={tile => tile.widthDeg}
+        tileHeight={tile => tile.heightDeg}
+        tileAltitude={() => 0.004}
+        tileMaterial={tile => tile.material}
+        tileCurvatureResolution={1}
 
         // === NEW: Country polygons + borders ===
         polygonsData={countries}
@@ -226,6 +442,35 @@ function App() {
       }}>
         <h1>Pollution Solver 🌍</h1>
         <p>CarbonMonitor bitmap overlay + DB-backed country bars</p>
+      </div>
+
+      <div style={{
+        position: 'absolute',
+        top: 20,
+        right: 20,
+        color: '#d4f0ff',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        lineHeight: 1.45,
+        background: 'rgba(6, 14, 24, 0.82)',
+        border: '1px solid rgba(120, 180, 220, 0.35)',
+        padding: '10px 12px',
+        borderRadius: '8px',
+        minWidth: '220px'
+      }}>
+        <div>OSM LoD Debug</div>
+        <div>pov: {osmDebug.lat.toFixed(2)}, {osmDebug.lng.toFixed(2)}</div>
+        <div>altitude: {osmDebug.altitude.toFixed(3)}</div>
+        <div>overlay active: {osmDebug.active ? 'yes' : 'no'}</div>
+        <div>requested chunks: {osmDebug.requested}</div>
+        <div>visible chunks: {osmDebug.visible}</div>
+        <div>cache ready: {osmDebug.cacheReady ? 'yes' : 'no'}</div>
+        <div>last fetch: {osmDebug.fetchMs} ms</div>
+        <div>failed requests: {osmDebug.failed}</div>
+        <div>status: {osmDebug.loading ? 'loading' : 'idle'}</div>
+        <div style={{ maxWidth: '340px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          error: {osmDebug.error || '-'}
+        </div>
       </div>
     </div>
   );

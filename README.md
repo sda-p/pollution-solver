@@ -135,6 +135,21 @@ curl -X POST http://localhost:3001/osm/features \
     - optional filters: `amenity`, `highway`
   - Returns: Overpass `elements` array
 
+- `GET /osm/chunk`
+  - Query:
+    - `south`, `west`, `north`, `east` (required numeric bbox)
+    - `lod` (`coarse` | `medium` | `fine`, optional)
+    - `pixelSize` (optional)
+  - Returns: road raster chunk payload `{ image: { width, height, rgbaBase64 }, meta }`
+
+OSM chunking can be tuned with optional env vars:
+
+- `OVERPASS_FALLBACK_URLS` (comma-separated alternate Overpass endpoints)
+- `OVERPASS_MIN_INTERVAL_MS` (default `900`)
+- `OVERPASS_MAX_RETRIES` (default `2`)
+- `OSM_CHUNK_CACHE_DIR` (default `cache/osm-chunks`, persisted raster cache on disk)
+- `OSM_CHUNK_DISK_TTL_MS` (default `2592000000` = 30 days)
+
 Frontend helper functions are available in:
 
 - `frontend/src/services/mobilityApi.js`

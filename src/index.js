@@ -3,6 +3,7 @@ import cors from "cors";
 import { fetchOsmElements } from "./services/osmClient.js";
 import { fetchPollutionInsights } from "./services/pollutionInsights.service.js";
 import { fetchCarbonMonitorHeatmap } from "./services/carbonMonitor.service.js";
+import { fetchOsmChunkBitmap } from "./services/osmChunk.service.js";
 
 const app = express();
 app.use(cors());
@@ -62,6 +63,43 @@ app.post("/osm/features", async (req, res) => {
       highway,
     });
     res.json({ count: elements.length, elements });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get("/osm/chunk", async (req, res) => {
+  try {
+    const south = Number(req.query.south);
+    const west = Number(req.query.west);
+    const north = Number(req.query.north);
+    const east = Number(req.query.east);
+    const lod = typeof req.query.lod === "string" ? req.query.lod : "coarse";
+    const pixelSize = Number(req.query.pixelSize);
+
+    const bbox = [south, west, north, east];
+    if (bbox.some(Number.isNaN)) {
+      res.status(400).json({
+        error: "Invalid bbox. Provide numeric south, west, north, east query params.",
+      });
+      return;
+    }
+    if (south >= north || west >= east) {
+      res.status(400).json({
+        error: "Invalid bbox bounds. Ensure south < north and west < east.",
+      });
+      return;
+    }
+
+    const payload = await fetchOsmChunkBitmap({
+      south,
+      west,
+      north,
+      east,
+      lod,
+      pixelSize: Number.isFinite(pixelSize) ? pixelSize : undefined,
+    });
+    res.json(payload);
   } catch (error) {
     res.status(502).json({ error: error.message });
   }
