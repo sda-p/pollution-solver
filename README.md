@@ -1,2 +1,99 @@
 # pollution-solver
 Integrates world data and resolves concrete sustainability insights.
+
+## PostgreSQL setup
+
+### 0. Install project dependencies
+
+```bash
+npm install
+```
+
+### 1. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Default local settings:
+
+- `host`: `localhost`
+- `port`: `5432`
+- `database`: `pollution_solver`
+- `user`: `postgres`
+- `password`: `postgres`
+
+### 2. Start PostgreSQL
+
+Option A (Docker Compose):
+
+```bash
+npm run db:up
+```
+
+Option B (Homebrew PostgreSQL 16 on macOS):
+
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+```
+
+### 3. Ingest datasets
+
+```bash
+npm run db:ingest
+```
+
+The ingestion script is idempotent and will:
+
+- ensure role `postgres` and database `pollution_solver` exist
+- create/update ingestion tables
+- stream-import World Bank XML indicator data
+- register Carbon Monitor NetCDF file metadata
+
+### 4. Smoke-test with queries
+
+```bash
+npm run db:test
+```
+
+## Database structure
+
+### `dataset_files`
+
+Catalog of source files loaded into the system.
+
+- `file_name TEXT PRIMARY KEY`
+- `format TEXT NOT NULL`
+- `size_bytes BIGINT NOT NULL`
+- `sha256 TEXT`
+- `container_type TEXT`
+- `extracted_from TEXT`
+- `record_count INTEGER`
+- `notes TEXT`
+
+### `world_bank_indicator_values`
+
+Country/year values from the two World Bank XML datasets.
+
+- `dataset_file TEXT NOT NULL` (FK -> `dataset_files.file_name`)
+- `country_code TEXT NOT NULL`
+- `country_name TEXT NOT NULL`
+- `indicator_code TEXT NOT NULL`
+- `indicator_name TEXT NOT NULL`
+- `year INTEGER NOT NULL`
+- `value DOUBLE PRECISION`
+- `PRIMARY KEY (dataset_file, country_code, indicator_code, year)`
+
+Indexes:
+
+- `idx_world_bank_indicator_year (indicator_code, year)`
+- `idx_world_bank_country (country_code, year)`
+
+### `carbon_monitor_variables`
+
+Tracked variables/attributes found in the Carbon Monitor NetCDF payload.
+
+- `file_name TEXT NOT NULL` (FK -> `dataset_files.file_name`)
+- `variable_name TEXT NOT NULL`
+- `PRIMARY KEY (file_name, variable_name)`

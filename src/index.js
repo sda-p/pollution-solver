@@ -1,3 +1,1 @@
-
-cat > src/index.js <<'EOF'
-console.log("Hello from Node 👋");
+console.log("pollution-solver service started");
