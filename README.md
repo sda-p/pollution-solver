@@ -200,6 +200,15 @@ curl -X POST http://localhost:3001/osm/features \
 
 ### 6. Backend endpoints added
 
+- `GET /insights`
+  - Returns latest country-level World Bank energy-use values from PostgreSQL
+  - Response: `{ pollutionPoints, meta }`
+
+- `GET /insights/carbon-monitor`
+  - Query params (optional): `stride`, `percentile`
+  - Returns downsampled CarbonMonitor NetCDF emissions as an equirectangular RGBA bitmap payload
+  - Response: `{ image: { width, height, rgbaBase64 }, meta }`
+
 - `POST /osm/features`
   - Body:
     - `south`, `west`, `north`, `east` (required numeric bbox)

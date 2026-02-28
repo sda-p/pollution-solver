@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import { fetchOsmElements } from "./services/osmClient.js";
 import { resolveRoute } from "./services/graphhopperClient.js";
+import { fetchPollutionInsights } from "./services/pollutionInsights.service.js";
+import { fetchCarbonMonitorHeatmap } from "./services/carbonMonitor.service.js";
 
 const app = express();
 app.use(cors());
@@ -11,14 +13,33 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-// TODO: replace this with real pollution + OSM-derived insights.
-app.get("/insights", (_req, res) => {
-  const sampleData = [
-    { lat: 40.71, lng: -74.0, size: 0.8, color: "#ff0000", name: "New York" },
-    { lat: 51.51, lng: -0.13, size: 0.6, color: "#ff0000", name: "London" },
-    { lat: 35.68, lng: 139.77, size: 0.9, color: "#ff0000", name: "Tokyo" },
-  ];
-  res.json({ pollutionPoints: sampleData });
+app.get("/insights", async (_req, res) => {
+  try {
+    const payload = await fetchPollutionInsights();
+    res.json(payload);
+  } catch (error) {
+    console.error("Failed to load pollution insights:", error.message);
+    res.status(503).json({
+      error: "Unable to load pollution insights from database.",
+      pollutionPoints: [],
+    });
+  }
+});
+
+app.get("/insights/carbon-monitor", async (req, res) => {
+  try {
+    const payload = await fetchCarbonMonitorHeatmap({
+      stride: req.query.stride,
+      percentile: req.query.percentile,
+    });
+    res.json(payload);
+  } catch (error) {
+    console.error("Failed to load CarbonMonitor heatmap:", error.message);
+    res.status(503).json({
+      error: "Unable to load CarbonMonitor heatmap data.",
+      image: null,
+    });
+  }
 });
 
 app.post("/osm/features", async (req, res) => {

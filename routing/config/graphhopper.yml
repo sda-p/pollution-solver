@@ -1,0 +1,37 @@
+graphhopper:
+  datareader.file: /data/osm/monaco-latest.osm.pbf
+  graph.location: /data/graph-cache/default-gh
+
+  profiles:
+    - name: car
+      custom_model_files: [car.json]
+    - name: bike
+      custom_model_files: [bike.json]
+    - name: foot
+      custom_model_files: [foot.json]
+
+  profiles_ch:
+    - profile: car
+    - profile: bike
+    - profile: foot
+
+  profiles_lm: []
+
+  graph.encoded_values: car_access,car_average_speed,bike_access,bike_average_speed,foot_access,foot_average_speed,road_access,bike_priority,bike_road_access,mtb_rating,hike_rating,country,road_class,foot_priority,foot_road_access
+
+  import.osm.ignored_highways: construction
+
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+  request_log:
+    appenders: []
+  admin_connectors:
+    - type: http
+      port: 8990
+
+logging:
+  appenders:
+    - type: console
+      threshold: INFO
