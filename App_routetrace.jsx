@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
-import SidebarWidget from './layout/SidebarWidget.jsx';
-import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, fetchRoute, searchOsmAddress } from './services/mobilityApi';
+import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, searchOsmAddress, fetchRoute } from './services/mobilityApi';
 
 const ABERDEEN_BOUNDS = {
   south: 56.85,
@@ -181,17 +180,10 @@ function App() {
   const osmTilePendingRef = useRef(new Map());
   const osmUpdateTimerRef = useRef(null);
   const osmRequestTokenRef = useRef(0);
-  const searchTokenRef = useRef(0);
-
   const [insights, setInsights] = useState([]);
   const [carbonBitmap, setCarbonBitmap] = useState(null);
   const [cameraAltitude, setCameraAltitude] = useState(2.5);
   const [osmTiles, setOsmTiles] = useState([]);
-  const [countries, setCountries] = useState([]);
-  const [countryData, setCountryData] = useState({});
-  const [selectedCountry, setSelectedCountry] = useState(null);
-  const [countriesByIso3, setCountriesByIso3] = useState(new Map());
-
   const [osmDebug, setOsmDebug] = useState({
     altitude: 2.5,
     lat: 0,
@@ -209,7 +201,6 @@ function App() {
     error: '',
     active: false
   });
-
   const [osmLookup, setOsmLookup] = useState({
     loading: false,
     lat: null,
@@ -220,7 +211,6 @@ function App() {
     country: '',
     error: ''
   });
-
   const [addressSearch, setAddressSearch] = useState({
     q: '',
     loading: false,
@@ -228,20 +218,20 @@ function App() {
     selectedIdx: -1,
     error: ''
   });
-
+  const searchTokenRef = useRef(0);
   const [clickMarker, setClickMarker] = useState(null);
   const [selectedAddressMarker, setSelectedAddressMarker] = useState(null);
   const [routeState, setRouteState] = useState({
-    from: null,
-    to: null,
+    start: null,
+    end: null,
+    path: null,
     loading: false,
     error: '',
-    distanceKm: null,
-    durationMin: null,
-    profile: 'driving',
-    awaiting: 'from',
-    geojson: null
+    distanceMeters: 0,
+    durationSeconds: 0
   });
+  const [countries, setCountries] = useState([]);
+  const [countriesByIso3, setCountriesByIso3] = useState(new Map());
 
   const overlayOpacityFromAltitude = altitude => {
     const a = Number.isFinite(altitude) ? altitude : 2.5;
@@ -274,7 +264,7 @@ function App() {
 
     const span = Math.max(0.00001, ZOOM_DAMPING_START_ALTITUDE - MIN_CAMERA_ALTITUDE);
     const normalized = clamp((clampedAltitude - MIN_CAMERA_ALTITUDE) / span, 0, 1);
-    const logScaled = Math.log10(1 + 9 * normalized);
+    const logScaled = Math.log10(1 + 9 * normalized); // 0..1 logarithmic curve
     controls.zoomSpeed = 0.004 + 0.52 * logScaled;
 
     if (altitude < MIN_CAMERA_ALTITUDE) {
@@ -293,19 +283,15 @@ function App() {
     return cameraAltitude;
   };
 
+  // Load country-level pollution insights from backend
   useEffect(() => {
     fetch(`${API_BASE_URL}/insights`)
       .then(res => res.json())
-      .then(data => {
-        setInsights(data.pollutionPoints || []);
-        setCountryData(data.countryData || {});
-      })
-      .catch(() => {
-        setInsights([]);
-        setCountryData({});
-      });
+      .then(data => setInsights(data.pollutionPoints || []))
+      .catch(() => setInsights([]));
   }, []);
 
+  // Load CarbonMonitor rasterized emissions
   useEffect(() => {
     fetch(`${API_BASE_URL}/insights/carbon-monitor?stride=8&percentile=99.3`)
       .then(res => res.json())
@@ -313,10 +299,9 @@ function App() {
       .catch(() => setCarbonBitmap(null));
   }, []);
 
+  // Load real country borders (GeoJSON)
   useEffect(() => {
-    fetch(
-      'https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson'
-    )
+    fetch('https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson')
       .then(res => res.json())
       .then(geojson => {
         const features = geojson.features || [];
@@ -402,25 +387,6 @@ function App() {
     return [{ texture, layerType: 'carbon-overlay' }];
   }, [carbonBitmap]);
 
-  const routePathData = useMemo(() => {
-    const geometry = routeState.geojson;
-    const coordinates = geometry?.type === 'LineString' ? geometry.coordinates : null;
-    if (!coordinates?.length) return [];
-    const points = coordinates
-      .map(coord => ({
-        lat: Number(coord?.[1]),
-        lng: Number(coord?.[0])
-      }))
-      .filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
-    if (points.length < 2) return [];
-    return [
-      {
-        id: 'selected-route',
-        points
-      }
-    ];
-  }, [routeState.geojson]);
-
   useEffect(() => {
     return () => {
       carbonOverlayData.forEach(layer => layer.texture?.dispose?.());
@@ -464,30 +430,28 @@ function App() {
       east: spec.east,
       lod: spec.lod,
       pixelSize: spec.pixelSize
-    })
-      .then(payload => {
-        const texture = decodeRgbaTexture(payload.image);
-        if (!texture) throw new Error(`Invalid OSM chunk image: ${spec.key}`);
-        const material = new THREE.MeshBasicMaterial({
-          map: texture,
-          transparent: true,
-          opacity: 0.9,
-          alphaTest: 0.02,
-          depthWrite: false,
-          side: THREE.DoubleSide
-        });
-        const tile = {
-          ...spec,
-          layerType: 'osm-tile',
-          texture,
-          material
-        };
-        osmTileCacheRef.current.set(spec.key, tile);
-        return tile;
-      })
-      .finally(() => {
-        osmTilePendingRef.current.delete(spec.key);
+    }).then(payload => {
+      const texture = decodeRgbaTexture(payload.image);
+      if (!texture) throw new Error(`Invalid OSM chunk image: ${spec.key}`);
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        opacity: 0.9,
+        alphaTest: 0.02,
+        depthWrite: false,
+        side: THREE.DoubleSide
       });
+      const tile = {
+        ...spec,
+        layerType: 'osm-tile',
+        texture,
+        material
+      };
+      osmTileCacheRef.current.set(spec.key, tile);
+      return tile;
+    }).finally(() => {
+      osmTilePendingRef.current.delete(spec.key);
+    });
 
     osmTilePendingRef.current.set(spec.key, promise);
     return promise;
@@ -500,7 +464,9 @@ function App() {
     const lat = Number.isFinite(pov?.lat) ? pov.lat : 0;
     const lng = Number.isFinite(pov?.lng) ? pov.lng : 0;
     const active = shouldShowAberdeenOverlay(pov);
-    const specs = active ? buildChunkSpecsFromTopChunks(['0:0'], pov) : [];
+    const specs = active
+      ? buildChunkSpecsFromTopChunks(['0:0'], pov)
+      : [];
 
     setOsmDebug(prev => ({
       ...prev,
@@ -745,415 +711,387 @@ function App() {
     resolveNearestRoad({ lat, lng });
   };
 
-  const clearRouteSelection = () => {
+  const requestRoute = async (start, end) => {
     setRouteState(prev => ({
       ...prev,
-      from: null,
-      to: null,
-      loading: false,
-      error: '',
-      distanceKm: null,
-      durationMin: null,
-      awaiting: 'from',
-      geojson: null
-    }));
-  };
-
-  const pickRoutePoint = async coords => {
-    const lat = Number(coords?.lat);
-    const lng = Number(coords?.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-
-    if (!routeState.from || (routeState.from && routeState.to)) {
-      setRouteState(prev => ({
-        ...prev,
-        from: { lat, lng },
-        to: null,
-        loading: false,
-        error: '',
-        distanceKm: null,
-        durationMin: null,
-        awaiting: 'to',
-        geojson: null
-      }));
-      return;
-    }
-
-    const from = routeState.from;
-    setRouteState(prev => ({
-      ...prev,
-      to: { lat, lng },
+      start,
+      end,
+      path: prev.path,
       loading: true,
-      error: '',
-      awaiting: 'to',
-      geojson: null
+      error: ''
     }));
-
     try {
       const payload = await fetchRoute({
-        fromLat: from.lat,
-        fromLng: from.lng,
-        toLat: lat,
-        toLng: lng,
-        profile: routeState.profile
+        startLat: start.lat,
+        startLng: start.lng,
+        endLat: end.lat,
+        endLng: end.lng
       });
-      const route = payload?.routes?.[0];
-      const distanceKm = Number(route?.distance) / 1000;
-      const durationMin = Number(route?.duration) / 60;
-      setRouteState(prev => ({
-        ...prev,
-        to: { lat, lng },
+      const points = Array.isArray(payload?.points) ? payload.points : [];
+      const coords = points
+        .map(pair => {
+          const lat = Number(pair?.[0]);
+          const lng = Number(pair?.[1]);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+          return { lat, lng };
+        })
+        .filter(Boolean);
+      if (coords.length < 2) throw new Error('Route geometry was empty.');
+      setRouteState({
+        start,
+        end,
+        path: { id: `route:${Date.now()}`, coords },
         loading: false,
         error: '',
-        distanceKm: Number.isFinite(distanceKm) ? distanceKm : null,
-        durationMin: Number.isFinite(durationMin) ? durationMin : null,
-        awaiting: 'from',
-        geojson: route?.geometry || null
-      }));
+        distanceMeters: Number(payload?.distanceMeters) || 0,
+        durationSeconds: Number(payload?.durationSeconds) || 0
+      });
     } catch (error) {
       setRouteState(prev => ({
         ...prev,
-        to: { lat, lng },
         loading: false,
-        error: error?.message || 'route lookup failed',
-        distanceKm: null,
-        durationMin: null,
-        awaiting: 'from',
-        geojson: null
+        error: error?.message || 'route request failed'
       }));
     }
   };
 
-  const getCountryColor = countryName => {
-    const data = countryData[countryName];
-    if (!data) return 'rgba(100,100,100,0.25)';
-    const score = Math.min(data.pm25, 100);
-    const hue = 120 - score * 1.2;
-    return `hsla(${hue}, 88%, 58%, 0.74)`;
+  const addRoutePointFromClick = coords => {
+    const lat = Number(coords?.lat);
+    const lng = Number(coords?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const point = { lat, lng };
+    setRouteState(prev => {
+      if (!prev.start || (prev.start && prev.end)) {
+        return {
+          ...prev,
+          start: point,
+          end: null,
+          path: null,
+          error: ''
+        };
+      }
+      return {
+        ...prev,
+        end: point,
+        error: ''
+      };
+    });
   };
 
+  useEffect(() => {
+    if (!routeState.start || !routeState.end) return;
+    requestRoute(routeState.start, routeState.end);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeState.start?.lat, routeState.start?.lng, routeState.end?.lat, routeState.end?.lng]);
+
   return (
-    <div className="h-screen bg-emerald-950 text-white flex flex-col overflow-hidden font-sans">
-      <div className="fixed top-0 left-0 right-0 z-50 navbar bg-emerald-950/80 backdrop-blur-3xl border-b border-emerald-400/30 px-8 py-6">
-        <div className="navbar-start flex items-center gap-4">
-          <span className="text-4xl">🌍</span>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-emerald-50">Pollution Solver</h1>
-            <p className="text-xs text-emerald-400/90 -mt-1 uppercase tracking-widest">see • choose • improve</p>
-          </div>
+    <div style={{ width: '100vw', height: '100vh', background: '#000' }}>
+      <Globe
+        ref={globeRef}
+        globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"           // ← your high-res texture
+        backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
+        
+        // Points (your red pollution dots)
+        pointsData={pointsData}
+        pointLat={d => d.lat}
+        pointLng={d => d.lng}
+        pointColor={d => d.color || '#ff4444'}
+        pointAltitude={d => d.size}
+        pointRadius={0.24}
+        pointLabel={d => `
+          <b>${d.countryName}</b><br/>
+          ${d.indicatorCode}: ${d.value?.toFixed?.(2) ?? d.value}<br/>
+          Year: ${d.year}
+        `}
+        labelsData={[clickMarker, selectedAddressMarker].filter(Boolean)}
+        labelLat={d => d.lat}
+        labelLng={d => d.lng}
+        labelText={() => ''}
+        labelColor={d => d.color}
+        labelSize={0.0001}
+        labelDotRadius={d => d.dotRadius || 0.0001}
+        labelAltitude={d => d.altitude || 0.0003001}
+        pathsData={routeState.path ? [routeState.path] : []}
+        pathPoints={d => d.coords}
+        pathPointLat={p => p.lat}
+        pathPointLng={p => p.lng}
+        pathPointAlt={() => 0.0003002}
+        pathColor={() => '#00ffd0'}
+        pathStroke={3.55}
+        pathTransitionDuration={0}
+
+        // CarbonMonitor pixel bitmap overlay
+        customLayerData={carbonOverlayData}
+        customThreeObject={layer => {
+          const radius = (globeRef.current?.getGlobeRadius?.() || 100) * 1.0008;
+          const geometry = new THREE.SphereGeometry(radius, 96, 96);
+          const material = new THREE.MeshBasicMaterial({
+            map: layer.texture,
+            transparent: true,
+            opacity: overlayOpacityFromAltitude(cameraAltitude),
+            depthWrite: false,
+            side: THREE.DoubleSide
+          });
+          carbonOverlayMaterialRef.current = material;
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.rotation.y = -Math.PI / 2;
+          return mesh;
+        }}
+        onGlobeReady={() => {
+          const pov = globeRef.current?.pointOfView?.();
+          const dampedAltitude = applyLogZoomDamping(pov);
+          const altitude = updateCameraAltitudeFromPov({ ...pov, altitude: dampedAltitude });
+          if (carbonOverlayMaterialRef.current) {
+            carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
+          }
+          scheduleOsmOverlayUpdate(pov);
+        }}
+        onZoom={pov => {
+          const dampedAltitude = applyLogZoomDamping(pov);
+          const altitude = updateCameraAltitudeFromPov({ ...pov, altitude: dampedAltitude });
+          if (carbonOverlayMaterialRef.current) {
+            carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
+          }
+          scheduleOsmOverlayUpdate(pov);
+        }}
+        onGlobeClick={() => {}}
+        pointerEventsFilter={(obj, data) => {
+          void obj;
+          if (data?.layerType === 'osm-tile') return true;
+          if (data?.layerType === 'carbon-overlay') return false;
+          // Keep polygon meshes from hijacking tile clicks; use onTileClick coords instead.
+          if (data?.geometry && data?.properties) return false;
+          return true;
+        }}
+
+        // OSM LoD chunk overlay
+        tilesData={osmTiles}
+        tileLat={tile => tile.lat}
+        tileLng={tile => tile.lng}
+        tileWidth={tile => tile.widthDeg}
+        tileHeight={tile => tile.heightDeg}
+        tileAltitude={() => 0.0003}
+        tileMaterial={tile => tile.material}
+        tilesTransitionDuration={0}
+        tileTransitionDuration={0}
+        tileCurvatureResolution={1}
+        onTileClick={(tile, event, coords) => {
+          void tile;
+          void event;
+          addRoutePointFromClick(coords);
+          resolveNearestRoad(coords, { fromClick: true });
+        }}
+
+        // === NEW: Country polygons + borders ===
+        polygonsData={countries}
+        polygonGeoJsonGeometry={d => d.geometry}
+        polygonCapColor={() => `rgba(255,255,255,${(borderOpacityFromAltitude(cameraAltitude) * 0.25).toFixed(3)})`}
+        polygonSideColor={() => `rgba(255,255,255,${(borderOpacityFromAltitude(cameraAltitude) * 0.45).toFixed(3)})`}
+        polygonStrokeColor={() => `rgba(255,255,255,${borderOpacityFromAltitude(cameraAltitude).toFixed(3)})`}
+        polygonAltitude={polygonAltitudeFromCamera(cameraAltitude)}
+        polygonLabel={d => `<b>${d.properties.NAME}</b>`} // hover tooltip
+
+        // === Interactivity ===
+        onPolygonClick={() => {}}
+        onPolygonHover={polygon => {
+          void polygon;
+        }}
+      />
+
+      <div style={{
+        position: 'absolute',
+        top: 20,
+        left: 20,
+        color: 'white',
+        fontFamily: 'Arial',
+        background: 'rgba(0,0,0,0.6)',
+        padding: '15px',
+        borderRadius: '8px',
+        pointerEvents: 'none'
+      }}>
+        <h1>Pollution Solver 🌍</h1>
+        <p>CarbonMonitor bitmap overlay + DB-backed country bars</p>
+      </div>
+
+      <div style={{
+        position: 'absolute',
+        top: 20,
+        right: 20,
+        color: '#d4f0ff',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        lineHeight: 1.45,
+        background: 'rgba(6, 14, 24, 0.82)',
+        border: '1px solid rgba(120, 180, 220, 0.35)',
+        padding: '10px 12px',
+        borderRadius: '8px',
+        minWidth: '220px'
+      }}>
+        <div>OSM LoD Debug</div>
+        <div>pov: {osmDebug.lat.toFixed(2)}, {osmDebug.lng.toFixed(2)}</div>
+        <div>altitude: {osmDebug.altitude.toFixed(3)}</div>
+        <div>overlay active: {osmDebug.active ? 'yes' : 'no'}</div>
+        <div>requested chunks: {osmDebug.requested}</div>
+        <div>visible chunks: {osmDebug.visible}</div>
+        <div>lod coarse/med/fine: {osmDebug.coarse}/{osmDebug.medium}/{osmDebug.fine}</div>
+        <div>cache ready: {osmDebug.cacheReady ? 'yes' : 'no'}</div>
+        <div>cache size: {osmDebug.cacheSize}</div>
+        <div>last fetch: {osmDebug.fetchMs} ms</div>
+        <div>failed requests: {osmDebug.failed}</div>
+        <div>status: {osmDebug.loading ? 'loading' : 'idle'}</div>
+        <div style={{ maxWidth: '340px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          error: {osmDebug.error || '-'}
+        </div>
+        <div style={{ marginTop: '6px' }}>route: {routeState.loading ? 'loading' : routeState.path ? 'ready' : 'idle'}</div>
+        <div>route points: {routeState.start ? 1 : 0}{routeState.end ? ' -> 2' : ''}</div>
+        <div>distance: {routeState.distanceMeters ? `${(routeState.distanceMeters / 1000).toFixed(2)} km` : '-'}</div>
+        <div>duration: {routeState.durationSeconds ? `${Math.round(routeState.durationSeconds / 60)} min` : '-'}</div>
+        <div style={{ maxWidth: '340px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          route error: {routeState.error || '-'}
         </div>
       </div>
 
-      <div className="flex-1 pt-24 relative overflow-hidden">
-        <Globe
-          ref={globeRef}
-          globeImageUrl="//unpkg.com/three-globe/example/img/earth-day.jpg"
-          bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
-          backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
-          showAtmosphere={true}
-          atmosphereColor="#a0d8ff"
-          atmosphereAltitude={0.25}
-          pointsData={pointsData}
-          pointLat={d => d.lat}
-          pointLng={d => d.lng}
-          pointColor={d => d.color || '#ff4444'}
-          pointAltitude={d => d.size}
-          pointRadius={0.24}
-          pointLabel={d =>
-            `<b>${d.countryName}</b><br/>${d.indicatorCode}: ${d.value?.toFixed?.(2) ?? d.value}<br/>Year: ${d.year}`
-          }
-          labelsData={[
-            clickMarker,
-            selectedAddressMarker,
-            routeState.from
-              ? {
-                  id: `route-from:${routeState.from.lat.toFixed(5)}:${routeState.from.lng.toFixed(5)}`,
-                  lat: routeState.from.lat,
-                  lng: routeState.from.lng,
-                  color: '#f59e0b',
-                  dotRadius: 0.00055,
-                  altitude: 0.0003001
-                }
-              : null,
-            routeState.to
-              ? {
-                  id: `route-to:${routeState.to.lat.toFixed(5)}:${routeState.to.lng.toFixed(5)}`,
-                  lat: routeState.to.lat,
-                  lng: routeState.to.lng,
-                  color: '#ef4444',
-                  dotRadius: 0.00055,
-                  altitude: 0.0003001
-                }
-              : null
-          ].filter(Boolean)}
-          labelLat={d => d.lat}
-          labelLng={d => d.lng}
-          labelText={() => ''}
-          labelColor={d => d.color}
-          labelSize={0.0001}
-          labelDotRadius={d => d.dotRadius || 0.0001}
-          labelAltitude={d => d.altitude || 0.0003001}
-          pathsData={routePathData}
-          pathPoints={path => path.points}
-          pathPointLat={point => point.lat}
-          pathPointLng={point => point.lng}
-          pathPointAlt={() => 0.0003002}
-          pathColor={() => '#00ffd0'}
-          pathStroke={3.55}
-          pathDashLength={0.16}
-          pathDashGap={0.08}
-          pathDashAnimateTime={2200}
-          pathTransitionDuration={0}
-          customLayerData={carbonOverlayData}
-          customThreeObject={layer => {
-            const radius = (globeRef.current?.getGlobeRadius?.() || 100) * 1.0008;
-            const geometry = new THREE.SphereGeometry(radius, 96, 96);
-            const material = new THREE.MeshBasicMaterial({
-              map: layer.texture,
-              transparent: true,
-              opacity: overlayOpacityFromAltitude(cameraAltitude),
-              depthWrite: false,
-              side: THREE.DoubleSide
-            });
-            carbonOverlayMaterialRef.current = material;
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.rotation.y = -Math.PI / 2;
-            return mesh;
-          }}
-          onGlobeReady={() => {
-            const pov = globeRef.current?.pointOfView?.();
-            const dampedAltitude = applyLogZoomDamping(pov);
-            const altitude = updateCameraAltitudeFromPov({ ...pov, altitude: dampedAltitude });
-            if (carbonOverlayMaterialRef.current) {
-              carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
-            }
-            scheduleOsmOverlayUpdate(pov);
-          }}
-          onZoom={pov => {
-            const dampedAltitude = applyLogZoomDamping(pov);
-            const altitude = updateCameraAltitudeFromPov({ ...pov, altitude: dampedAltitude });
-            if (carbonOverlayMaterialRef.current) {
-              carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
-            }
-            scheduleOsmOverlayUpdate(pov);
-          }}
-          onGlobeClick={() => {}}
-          pointerEventsFilter={(obj, data) => {
-            void obj;
-            if (data?.layerType === 'osm-tile') return true;
-            if (data?.layerType === 'carbon-overlay') return false;
-            if (data?.geometry && data?.properties) return false;
-            return true;
-          }}
-          tilesData={osmTiles}
-          tileLat={tile => tile.lat}
-          tileLng={tile => tile.lng}
-          tileWidth={tile => tile.widthDeg}
-          tileHeight={tile => tile.heightDeg}
-          tileAltitude={() => 0.0003}
-          tileMaterial={tile => tile.material}
-          tilesTransitionDuration={0}
-          tileTransitionDuration={0}
-          tileCurvatureResolution={1}
-          onTileClick={(tile, event, coords) => {
-            void tile;
-            void event;
-            resolveNearestRoad(coords, { fromClick: true });
-            pickRoutePoint(coords);
-          }}
-          polygonsData={countries}
-          polygonGeoJsonGeometry={d => d.geometry}
-          polygonCapColor={d => getCountryColor(d.properties.NAME)}
-          polygonSideColor={() =>
-            `rgba(255,255,255,${(borderOpacityFromAltitude(cameraAltitude) * 0.45).toFixed(3)})`
-          }
-          polygonStrokeColor={() =>
-            `rgba(255,255,255,${borderOpacityFromAltitude(cameraAltitude).toFixed(3)})`
-          }
-          polygonAltitude={polygonAltitudeFromCamera(cameraAltitude)}
-          polygonLabel={d => `<b>${d.properties.NAME}</b>`}
-          onPolygonClick={d => setSelectedCountry(d.properties.NAME)}
-          onPolygonHover={polygon => {
-            void polygon;
-          }}
-        />
-
-        <div className="pointer-events-none absolute top-5 left-5 rounded-2xl border border-emerald-400/30 bg-emerald-950/70 p-4 backdrop-blur-xl">
-          <h2 className="text-lg font-semibold text-emerald-50">Global Emissions Globe</h2>
-          <p className="text-xs text-emerald-300/80">Carbon bitmap + OSM LoD overlays enabled</p>
-        </div>
-
-        <div className="absolute top-5 right-5 w-80 rounded-2xl border border-white/10 bg-slate-950/75 p-4 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 text-sm font-semibold text-cyan-200">OSM LoD Debug</div>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px] leading-relaxed text-cyan-100/90">
-            <div>pov lat/lng</div>
-            <div>{osmDebug.lat.toFixed(2)}, {osmDebug.lng.toFixed(2)}</div>
-            <div>altitude</div>
-            <div>{osmDebug.altitude.toFixed(3)}</div>
-            <div>overlay active</div>
-            <div>{osmDebug.active ? 'yes' : 'no'}</div>
-            <div>requested</div>
-            <div>{osmDebug.requested}</div>
-            <div>visible</div>
-            <div>{osmDebug.visible}</div>
-            <div>lod c/m/f</div>
-            <div>{osmDebug.coarse}/{osmDebug.medium}/{osmDebug.fine}</div>
-            <div>cache ready</div>
-            <div>{osmDebug.cacheReady ? 'yes' : 'no'}</div>
-            <div>cache size</div>
-            <div>{osmDebug.cacheSize}</div>
-            <div>last fetch</div>
-            <div>{osmDebug.fetchMs} ms</div>
-            <div>failed</div>
-            <div>{osmDebug.failed}</div>
-            <div>status</div>
-            <div>{osmDebug.loading ? 'loading' : 'idle'}</div>
-          </div>
-          <div className="mt-2 truncate font-mono text-[11px] text-rose-200/90">error: {osmDebug.error || '-'}</div>
-        </div>
-
-        <div className="absolute top-36 left-5 w-[min(30rem,calc(100vw-2.5rem))] rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 text-sm font-semibold text-emerald-200">Address Search</div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={addressSearch.q}
-              onChange={event => {
-                const next = event.target.value;
-                setAddressSearch(prev => ({ ...prev, q: next }));
-              }}
-              onKeyDown={event => {
-                if (event.key === 'ArrowDown') {
-                  event.preventDefault();
-                  setAddressSearch(prev => ({
-                    ...prev,
-                    selectedIdx:
-                      prev.options.length === 0
-                        ? -1
-                        : Math.min(prev.selectedIdx + 1, prev.options.length - 1)
-                  }));
-                } else if (event.key === 'ArrowUp') {
-                  event.preventDefault();
-                  setAddressSearch(prev => ({
-                    ...prev,
-                    selectedIdx: prev.options.length === 0 ? -1 : Math.max(prev.selectedIdx - 1, 0)
-                  }));
-                } else if (event.key === 'Enter') {
-                  event.preventDefault();
-                  goToSearchSelection();
-                }
-              }}
-              placeholder="Type an address..."
-              className="flex-1 rounded-xl border border-cyan-300/40 bg-slate-900/95 px-3 py-2 text-cyan-50 outline-none transition-colors focus:border-cyan-200"
-            />
-            <button
-              onClick={goToSearchSelection}
-              disabled={addressSearch.options.length === 0}
-              className="rounded-xl border border-cyan-200/60 px-4 py-2 font-semibold text-cyan-50 transition-colors disabled:cursor-default disabled:border-slate-500/40 disabled:bg-slate-700/40 disabled:text-slate-300 enabled:bg-cyan-700/70 enabled:hover:bg-cyan-600/80"
-            >
-              Go
-            </button>
-          </div>
-          <div className="mt-2 font-mono text-[11px] text-cyan-100/90">status: {addressSearch.loading ? 'searching...' : 'idle'}</div>
-          <div className="mt-2 max-h-36 overflow-y-auto rounded-xl border border-cyan-300/20 bg-slate-900/80">
-            {addressSearch.options.length === 0 ? (
-              <div className="px-3 py-2 text-cyan-100/70">
-                {addressSearch.q.trim().length < 3 ? 'Type at least 3 characters' : 'No matches'}
-              </div>
-            ) : (
-              addressSearch.options.map((item, idx) => (
-                <button
-                  key={`${item.osmType || 'osm'}-${item.osmId || idx}-${idx}`}
-                  onClick={() => setAddressSearch(prev => ({ ...prev, selectedIdx: idx }))}
-                  className={`w-full border-b border-cyan-300/15 px-3 py-2 text-left font-mono text-[11px] text-cyan-50 last:border-b-0 ${
-                    idx === addressSearch.selectedIdx ? 'bg-cyan-700/45' : 'bg-transparent hover:bg-cyan-900/35'
-                  }`}
-                >
-                  <div className="truncate">{item.displayName}</div>
-                </button>
-              ))
-            )}
-          </div>
-          <div className="mt-2 truncate font-mono text-[11px] text-rose-200/90">error: {addressSearch.error || '-'}</div>
-        </div>
-
-        <div className="pointer-events-none absolute bottom-5 right-5 w-[min(27rem,calc(100vw-2.5rem))] rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 text-sm font-semibold text-cyan-100">Nearest OSM Road</div>
-          <div className="space-y-1 font-mono text-[11px] text-cyan-100/90">
-            <div>coords: {Number.isFinite(osmLookup.lat) ? osmLookup.lat.toFixed(5) : '-'}, {Number.isFinite(osmLookup.lng) ? osmLookup.lng.toFixed(5) : '-'}</div>
-            <div>status: {osmLookup.loading ? 'resolving...' : 'idle'}</div>
-            <div className="truncate">road: {osmLookup.addressLine || '-'}</div>
-            <div className="truncate">locality: {[osmLookup.locality, osmLookup.country].filter(Boolean).join(', ') || '-'}</div>
-            <div className="truncate">label: {osmLookup.displayName || '-'}</div>
-            <div className="truncate text-rose-200/90">error: {osmLookup.error || '-'}</div>
-          </div>
-        </div>
-
-        <div className="absolute bottom-5 left-5 w-[min(26rem,calc(100vw-2.5rem))] rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-semibold text-amber-100">Route Trace (OSRM)</div>
-            <button
-              onClick={clearRouteSelection}
-              className="rounded-lg border border-amber-200/40 px-2 py-1 text-[11px] font-semibold text-amber-100 hover:bg-amber-800/25"
-            >
-              Reset
-            </button>
-          </div>
-          <div className="space-y-1 font-mono text-[11px] text-amber-100/90">
-            <div>
-              from: {routeState.from ? `${routeState.from.lat.toFixed(5)}, ${routeState.from.lng.toFixed(5)}` : '-'}
-            </div>
-            <div>
-              to: {routeState.to ? `${routeState.to.lat.toFixed(5)}, ${routeState.to.lng.toFixed(5)}` : '-'}
-            </div>
-            <div>status: {routeState.loading ? 'routing...' : `click ${routeState.awaiting}`}</div>
-            <div>distance: {Number.isFinite(routeState.distanceKm) ? `${routeState.distanceKm.toFixed(2)} km` : '-'}</div>
-            <div>duration: {Number.isFinite(routeState.durationMin) ? `${routeState.durationMin.toFixed(1)} min` : '-'}</div>
-            <div className="truncate text-rose-200/90">error: {routeState.error || '-'}</div>
-          </div>
-        </div>
-      </div>
-
-      <div
-        className={`fixed top-24 left-0 h-[calc(100vh-6rem)] w-[400px] bg-emerald-950/95 backdrop-blur-md border-r border-emerald-500/30 shadow-2xl z-50 overflow-y-auto transition-transform duration-500 ease-in-out ${
-          selectedCountry ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        <div className="p-8">
+      <div style={{
+        position: 'absolute',
+        top: 130,
+        left: 20,
+        color: '#ebf7ff',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        lineHeight: 1.45,
+        background: 'rgba(8, 18, 30, 0.86)',
+        border: '1px solid rgba(120, 180, 220, 0.35)',
+        padding: '10px 12px',
+        borderRadius: '8px',
+        minWidth: '360px',
+        maxWidth: '520px'
+      }}>
+        <div>Address Search</div>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+          <input
+            type='text'
+            value={addressSearch.q}
+            onChange={event => {
+              const next = event.target.value;
+              setAddressSearch(prev => ({ ...prev, q: next }));
+            }}
+            onKeyDown={event => {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                setAddressSearch(prev => ({
+                  ...prev,
+                  selectedIdx:
+                    prev.options.length === 0 ? -1 : Math.min(prev.selectedIdx + 1, prev.options.length - 1)
+                }));
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                setAddressSearch(prev => ({
+                  ...prev,
+                  selectedIdx: prev.options.length === 0 ? -1 : Math.max(prev.selectedIdx - 1, 0)
+                }));
+              } else if (event.key === 'Enter') {
+                event.preventDefault();
+                goToSearchSelection();
+              }
+            }}
+            placeholder='Type an address...'
+            style={{
+              flex: 1,
+              minWidth: 0,
+              borderRadius: '6px',
+              border: '1px solid rgba(140, 190, 220, 0.55)',
+              background: 'rgba(9, 20, 34, 0.95)',
+              color: '#e9f5ff',
+              padding: '7px 8px',
+              outline: 'none'
+            }}
+          />
           <button
-            onClick={() => setSelectedCountry(null)}
-            className="absolute top-6 right-6 p-2 rounded-full hover:bg-emerald-800/50 transition-colors text-emerald-400"
+            onClick={goToSearchSelection}
+            disabled={addressSearch.options.length === 0}
+            style={{
+              borderRadius: '6px',
+              border: '1px solid rgba(150, 205, 235, 0.7)',
+              background: addressSearch.options.length ? 'rgba(36, 90, 126, 0.95)' : 'rgba(58, 68, 78, 0.7)',
+              color: '#f4fbff',
+              padding: '7px 10px',
+              cursor: addressSearch.options.length ? 'pointer' : 'default'
+            }}
           >
-            ✕
+            Go
           </button>
-
-          {selectedCountry && (
-            <div className="animate-in fade-in slide-in-from-left-4 duration-500">
-              <h2 className="text-4xl font-bold text-emerald-50 mb-1">{selectedCountry}</h2>
-              <p className="text-emerald-400/80 mb-6 text-sm font-medium">Regional Mobility Analysis</p>
-
-              {countryData[selectedCountry] ? (
-                <div className="space-y-6 mb-8">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-emerald-900/30 rounded-2xl border border-emerald-800/50">
-                      <div className="text-emerald-400 text-xs uppercase font-bold tracking-tighter">PM2.5 Level</div>
-                      <div className="text-4xl font-bold text-red-400 mt-1">{countryData[selectedCountry].pm25}</div>
-                    </div>
-                    <div className="p-4 bg-emerald-900/30 rounded-2xl border border-emerald-800/50">
-                      <div className="text-emerald-400 text-xs uppercase font-bold tracking-tighter">AQI Index</div>
-                      <div className="text-4xl font-bold text-orange-400 mt-1">{countryData[selectedCountry].aqi}</div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 bg-emerald-900/20 rounded-xl mb-8 border border-emerald-800/30 text-emerald-400/60 italic text-sm">
-                  Basic data loaded. Select a major hub for detailed transport metrics.
-                </div>
-              )}
-
-              <SidebarWidget location={selectedCountry} />
+        </div>
+        <div style={{ marginTop: '6px' }}>status: {addressSearch.loading ? 'searching...' : 'idle'}</div>
+        <div style={{
+          marginTop: '6px',
+          maxHeight: '132px',
+          overflowY: 'auto',
+          border: '1px solid rgba(120, 180, 220, 0.28)',
+          borderRadius: '6px',
+          background: 'rgba(7, 16, 28, 0.95)'
+        }}>
+          {addressSearch.options.length === 0 ? (
+            <div style={{ padding: '8px', opacity: 0.78 }}>
+              {addressSearch.q.trim().length < 3 ? 'Type at least 3 characters' : 'No matches'}
             </div>
+          ) : (
+            addressSearch.options.map((item, idx) => (
+              <button
+                key={`${item.osmType || 'osm'}-${item.osmId || idx}-${idx}`}
+                onClick={() => setAddressSearch(prev => ({ ...prev, selectedIdx: idx }))}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  fontFamily: 'monospace',
+                  fontSize: '12px',
+                  color: '#e8f7ff',
+                  border: 'none',
+                  borderBottom: idx === addressSearch.options.length - 1 ? 'none' : '1px solid rgba(120, 180, 220, 0.16)',
+                  background: idx === addressSearch.selectedIdx ? 'rgba(42, 94, 128, 0.55)' : 'transparent',
+                  padding: '7px 8px',
+                  cursor: 'pointer'
+                }}
+              >
+                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.displayName}</div>
+              </button>
+            ))
           )}
+        </div>
+        <div style={{ marginTop: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          error: {addressSearch.error || '-'}
+        </div>
+      </div>
+
+      <div style={{
+        position: 'absolute',
+        bottom: 20,
+        right: 20,
+        color: '#e7f5ff',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        lineHeight: 1.45,
+        background: 'rgba(8, 18, 30, 0.84)',
+        border: '1px solid rgba(120, 180, 220, 0.35)',
+        padding: '10px 12px',
+        borderRadius: '8px',
+        minWidth: '300px',
+        maxWidth: '430px',
+        pointerEvents: 'none'
+      }}>
+        <div>Nearest OSM Road</div>
+        <div>coords: {Number.isFinite(osmLookup.lat) ? osmLookup.lat.toFixed(5) : '-'}, {Number.isFinite(osmLookup.lng) ? osmLookup.lng.toFixed(5) : '-'}</div>
+        <div>status: {osmLookup.loading ? 'resolving...' : 'idle'}</div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          road: {osmLookup.addressLine || '-'}
+        </div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          locality: {[osmLookup.locality, osmLookup.country].filter(Boolean).join(', ') || '-'}
+        </div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          label: {osmLookup.displayName || '-'}
+        </div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          error: {osmLookup.error || '-'}
         </div>
       </div>
     </div>
