@@ -17,12 +17,14 @@ const OSM_ZOOM_ALTITUDE_THRESHOLD = 1.8;
 const OSM_LOD_LEVELS = [
   { lod: 'coarse', maxRefineAltitude: 1.25, pixelSize: 1536 },
   { lod: 'medium', maxRefineAltitude: 1.12, pixelSize: 1536 },
-  { lod: 'fine', maxRefineAltitude: 0.05, pixelSize: 2048 }
+  { lod: 'fine', maxRefineAltitude: 0.68, pixelSize: 2048 }
 ];
 const NEXT_LEVEL_CENTER_TRIGGER_FACTOR = 1.15;
 const TOP_CHUNK_WIDTH_DEG = ABERDEEN_BOUNDS.east - ABERDEEN_BOUNDS.west;
 const TOP_CHUNK_HEIGHT_DEG = ABERDEEN_BOUNDS.north - ABERDEEN_BOUNDS.south;
 const OSM_ABERDEEN_MAX_DISTANCE_DEG = 14;
+const MIN_CAMERA_ALTITUDE = 0.002;
+const ZOOM_DAMPING_START_ALTITUDE = 0.22;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -218,6 +220,30 @@ function App() {
     const a = Number.isFinite(altitude) ? altitude : 2.5;
     const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
     return 0.0002 + 0.0018 * t;
+  };
+
+  const applyLogZoomDamping = pov => {
+    const globe = globeRef.current;
+    const controls = globe?.controls?.();
+    if (!controls || !globe) return Number.isFinite(pov?.altitude) ? pov.altitude : cameraAltitude;
+
+    const radius = globe.getGlobeRadius?.() || 100;
+    controls.minDistance = radius * (1 + MIN_CAMERA_ALTITUDE);
+
+    const altitude = Number.isFinite(pov?.altitude) ? pov.altitude : cameraAltitude;
+    const clampedAltitude = Math.max(MIN_CAMERA_ALTITUDE, altitude);
+
+    const span = Math.max(0.00001, ZOOM_DAMPING_START_ALTITUDE - MIN_CAMERA_ALTITUDE);
+    const normalized = clamp((clampedAltitude - MIN_CAMERA_ALTITUDE) / span, 0, 1);
+    const logScaled = Math.log10(1 + 9 * normalized); // 0..1 logarithmic curve
+    controls.zoomSpeed = 0.004 + 0.52 * logScaled;
+
+    if (altitude < MIN_CAMERA_ALTITUDE) {
+      const currentPov = globe.pointOfView?.() || {};
+      globe.pointOfView({ ...currentPov, altitude: MIN_CAMERA_ALTITUDE }, 0);
+    }
+
+    return clampedAltitude;
   };
 
   const updateCameraAltitudeFromPov = pov => {
@@ -566,14 +592,16 @@ function App() {
         }}
         onGlobeReady={() => {
           const pov = globeRef.current?.pointOfView?.();
-          const altitude = updateCameraAltitudeFromPov(pov);
+          const dampedAltitude = applyLogZoomDamping(pov);
+          const altitude = updateCameraAltitudeFromPov({ ...pov, altitude: dampedAltitude });
           if (carbonOverlayMaterialRef.current) {
             carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
           }
           scheduleOsmOverlayUpdate(pov);
         }}
         onZoom={pov => {
-          const altitude = updateCameraAltitudeFromPov(pov);
+          const dampedAltitude = applyLogZoomDamping(pov);
+          const altitude = updateCameraAltitudeFromPov({ ...pov, altitude: dampedAltitude });
           if (carbonOverlayMaterialRef.current) {
             carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
           }
