@@ -98,7 +98,7 @@ function App() {
 </div>
 
       {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden pt-24">
+      <div className="flex flex-1">
         {/* Globe */}
         <div className="flex-1 relative">
           <Globe
