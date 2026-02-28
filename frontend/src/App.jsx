@@ -3,20 +3,23 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 import { API_BASE_URL, fetchOsmChunk } from './services/mobilityApi';
 
-const ABERDEEN_OSM_TILE = {
-  key: 'aberdeen:prerender:fine',
-  lod: 'fine',
+const ABERDEEN_BOUNDS = {
   south: 56.85,
   west: -2.62,
   north: 57.42,
-  east: -1.72,
-  lat: (56.85 + 57.42) / 2,
-  lng: (-2.62 + -1.72) / 2,
-  widthDeg: 0.9,
-  heightDeg: 0.57
+  east: -1.72
+};
+const ABERDEEN_CENTER = {
+  lat: (ABERDEEN_BOUNDS.south + ABERDEEN_BOUNDS.north) / 2,
+  lng: (ABERDEEN_BOUNDS.west + ABERDEEN_BOUNDS.east) / 2
 };
 const OSM_ZOOM_ALTITUDE_THRESHOLD = 0.9;
 const OSM_ABERDEEN_MAX_DISTANCE_DEG = 8;
+const OSM_LOD_LEVELS = [
+  { lod: 'coarse', maxRefineAltitude: 0.64, pixelSize: 1536 },
+  { lod: 'medium', maxRefineAltitude: 0.34, pixelSize: 1536 },
+  { lod: 'fine', maxRefineAltitude: 0.0, pixelSize: 2048 }
+];
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -54,12 +57,98 @@ const decodeRgbaTexture = image => {
   return texture;
 };
 
+const pointInsideInnerQuarter = (lat, lng, chunk) => {
+  const latMargin = chunk.heightDeg * 0.25;
+  const lngMargin = chunk.widthDeg * 0.25;
+  return (
+    lat >= chunk.south + latMargin &&
+    lat <= chunk.north - latMargin &&
+    lng >= chunk.west + lngMargin &&
+    lng <= chunk.east - lngMargin
+  );
+};
+
+const subdivideChunk = chunk => {
+  const midLat = (chunk.south + chunk.north) / 2;
+  const midLng = (chunk.west + chunk.east) / 2;
+  return [
+    { south: chunk.south, west: chunk.west, north: midLat, east: midLng, suffix: 'sw' },
+    { south: chunk.south, west: midLng, north: midLat, east: chunk.east, suffix: 'se' },
+    { south: midLat, west: chunk.west, north: chunk.north, east: midLng, suffix: 'nw' },
+    { south: midLat, west: midLng, north: chunk.north, east: chunk.east, suffix: 'ne' }
+  ];
+};
+
+const mapWithConcurrency = async (items, limit, worker) => {
+  const concurrency = Math.max(1, Math.trunc(limit));
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  const run = async () => {
+    while (cursor < items.length) {
+      const idx = cursor;
+      cursor += 1;
+      try {
+        results[idx] = await worker(items[idx], idx);
+      } catch (error) {
+        results[idx] = { __error: error };
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
+  return results;
+};
+
+const buildAberdeenChunkSpecs = pov => {
+  const lat = Number.isFinite(pov?.lat) ? pov.lat : ABERDEEN_CENTER.lat;
+  const lng = Number.isFinite(pov?.lng) ? pov.lng : ABERDEEN_CENTER.lng;
+  const altitude = Number.isFinite(pov?.altitude) ? pov.altitude : 2.5;
+  const specs = [];
+
+  const visit = (chunk, depth, path) => {
+    const level = OSM_LOD_LEVELS[depth];
+    const widthDeg = chunk.east - chunk.west;
+    const heightDeg = chunk.north - chunk.south;
+    const withMeta = {
+      ...chunk,
+      path,
+      lod: level.lod,
+      pixelSize: level.pixelSize,
+      widthDeg,
+      heightDeg,
+      lat: (chunk.south + chunk.north) / 2,
+      lng: (chunk.west + chunk.east) / 2
+    };
+
+    const hasChildLevel = depth < OSM_LOD_LEVELS.length - 1;
+    const shouldRefine =
+      hasChildLevel &&
+      altitude <= level.maxRefineAltitude &&
+      pointInsideInnerQuarter(lat, lng, withMeta);
+
+    if (!shouldRefine) {
+      specs.push({
+        ...withMeta,
+        key: `${withMeta.lod}:${path}`
+      });
+      return;
+    }
+
+    subdivideChunk(chunk).forEach(child => {
+      visit(child, depth + 1, `${path}.${child.suffix}`);
+    });
+  };
+
+  visit(ABERDEEN_BOUNDS, 0, 'root');
+  return specs;
+};
 
 function App() {
   const globeRef = useRef();
   const carbonOverlayMaterialRef = useRef(null);
-  const osmTileCacheRef = useRef(null);
-  const osmTilePendingRef = useRef(null);
+  const osmTileCacheRef = useRef(new Map());
+  const osmTilePendingRef = useRef(new Map());
   const osmUpdateTimerRef = useRef(null);
   const osmRequestTokenRef = useRef(0);
   const [insights, setInsights] = useState([]);
@@ -72,7 +161,11 @@ function App() {
     lng: 0,
     requested: 0,
     visible: 0,
+    coarse: 0,
+    medium: 0,
+    fine: 0,
     cacheReady: false,
+    cacheSize: 0,
     fetchMs: 0,
     loading: false,
     failed: 0,
@@ -219,11 +312,15 @@ function App() {
   }, [carbonOverlayData]);
 
   useEffect(() => {
+    const cache = osmTileCacheRef.current;
+    const pending = osmTilePendingRef.current;
     return () => {
       if (osmUpdateTimerRef.current) clearTimeout(osmUpdateTimerRef.current);
-      const tile = osmTileCacheRef.current;
-      tile?.texture?.dispose?.();
-      tile?.material?.dispose?.();
+      cache.forEach(tile => {
+        tile?.texture?.dispose?.();
+        tile?.material?.dispose?.();
+      });
+      pending.clear();
     };
   }, []);
 
@@ -232,26 +329,28 @@ function App() {
     if (altitude > OSM_ZOOM_ALTITUDE_THRESHOLD) return false;
     const lat = Number.isFinite(pov?.lat) ? pov.lat : 0;
     const lng = Number.isFinite(pov?.lng) ? pov.lng : 0;
-    const distance = angularDistanceDeg(lat, lng, ABERDEEN_OSM_TILE.lat, ABERDEEN_OSM_TILE.lng);
+    const distance = angularDistanceDeg(lat, lng, ABERDEEN_CENTER.lat, ABERDEEN_CENTER.lng);
     return distance <= OSM_ABERDEEN_MAX_DISTANCE_DEG;
   };
 
-  const ensureAberdeenTileLoaded = async () => {
-    if (osmTileCacheRef.current?.material && osmTileCacheRef.current?.texture) {
-      return osmTileCacheRef.current;
+  const ensureChunkLoaded = async spec => {
+    const cached = osmTileCacheRef.current.get(spec.key);
+    if (cached?.material && cached?.texture) return cached;
+
+    if (osmTilePendingRef.current.has(spec.key)) {
+      return osmTilePendingRef.current.get(spec.key);
     }
-    if (osmTilePendingRef.current) return osmTilePendingRef.current;
 
     const promise = fetchOsmChunk({
-      south: ABERDEEN_OSM_TILE.south,
-      west: ABERDEEN_OSM_TILE.west,
-      north: ABERDEEN_OSM_TILE.north,
-      east: ABERDEEN_OSM_TILE.east,
-      lod: ABERDEEN_OSM_TILE.lod,
-      pixelSize: 4086
+      south: spec.south,
+      west: spec.west,
+      north: spec.north,
+      east: spec.east,
+      lod: spec.lod,
+      pixelSize: spec.pixelSize
     }).then(payload => {
       const texture = decodeRgbaTexture(payload.image);
-      if (!texture) throw new Error('Invalid OSM Aberdeen prerender image');
+      if (!texture) throw new Error(`Invalid OSM chunk image: ${spec.key}`);
       const material = new THREE.MeshBasicMaterial({
         map: texture,
         transparent: true,
@@ -261,21 +360,19 @@ function App() {
         side: THREE.DoubleSide
       });
       const tile = {
-        ...ABERDEEN_OSM_TILE,
+        ...spec,
         layerType: 'osm-tile',
         texture,
         material
       };
-      osmTileCacheRef.current = tile;
+      osmTileCacheRef.current.set(spec.key, tile);
       return tile;
+    }).finally(() => {
+      osmTilePendingRef.current.delete(spec.key);
     });
 
-    osmTilePendingRef.current = promise;
-    try {
-      return await promise;
-    } finally {
-      osmTilePendingRef.current = null;
-    }
+    osmTilePendingRef.current.set(spec.key, promise);
+    return promise;
   };
 
   const updateOsmOverlayForPov = pov => {
@@ -285,14 +382,15 @@ function App() {
     const lat = Number.isFinite(pov?.lat) ? pov.lat : 0;
     const lng = Number.isFinite(pov?.lng) ? pov.lng : 0;
     const active = shouldShowAberdeenOverlay(pov);
+    const specs = active ? buildAberdeenChunkSpecs(pov) : [];
 
     setOsmDebug(prev => ({
       ...prev,
       altitude,
       lat,
       lng,
-      requested: active ? 1 : 0,
-      visible: active && osmTileCacheRef.current ? 1 : 0,
+      requested: specs.length,
+      visible: 0,
       active,
       error: ''
     }));
@@ -301,6 +399,11 @@ function App() {
       setOsmTiles([]);
       setOsmDebug(prev => ({
         ...prev,
+        requested: 0,
+        visible: 0,
+        coarse: 0,
+        medium: 0,
+        fine: 0,
         loading: false
       }));
       return;
@@ -308,17 +411,33 @@ function App() {
 
     const startedAt = performance.now();
     setOsmDebug(prev => ({ ...prev, loading: true }));
-    ensureAberdeenTileLoaded()
-      .then(tile => {
+    mapWithConcurrency(specs, 4, spec => ensureChunkLoaded(spec))
+      .then(results => {
         if (token !== osmRequestTokenRef.current) return;
-        setOsmTiles([tile]);
+        const failedErrors = results.filter(item => item?.__error).map(item => item.__error);
+        const visibleTiles = results.filter(item => item && !item.__error);
+        const byLod = visibleTiles.reduce(
+          (acc, tile) => {
+            if (tile?.lod === 'coarse') acc.coarse += 1;
+            else if (tile?.lod === 'medium') acc.medium += 1;
+            else if (tile?.lod === 'fine') acc.fine += 1;
+            return acc;
+          },
+          { coarse: 0, medium: 0, fine: 0 }
+        );
+        setOsmTiles(visibleTiles);
         setOsmDebug(prev => ({
           ...prev,
-          visible: 1,
-          cacheReady: true,
+          visible: visibleTiles.length,
+          coarse: byLod.coarse,
+          medium: byLod.medium,
+          fine: byLod.fine,
+          cacheReady: osmTileCacheRef.current.size > 0,
+          cacheSize: osmTileCacheRef.current.size,
           fetchMs: Math.round(performance.now() - startedAt),
           loading: false,
-          failed: 0
+          failed: failedErrors.length,
+          error: failedErrors[0]?.message || ''
         }));
       })
       .catch(error => {
@@ -329,8 +448,9 @@ function App() {
           visible: 0,
           fetchMs: Math.round(performance.now() - startedAt),
           loading: false,
-          failed: 1,
-          cacheReady: false,
+          failed: specs.length || 1,
+          cacheReady: osmTileCacheRef.current.size > 0,
+          cacheSize: osmTileCacheRef.current.size,
           error: error?.message || 'unknown OSM chunk load error'
         }));
       });
@@ -338,11 +458,24 @@ function App() {
 
   useEffect(() => {
     const startedAt = performance.now();
-    ensureAberdeenTileLoaded()
+    const initialSpec = {
+      ...ABERDEEN_BOUNDS,
+      lod: 'coarse',
+      pixelSize: OSM_LOD_LEVELS[0].pixelSize,
+      widthDeg: ABERDEEN_BOUNDS.east - ABERDEEN_BOUNDS.west,
+      heightDeg: ABERDEEN_BOUNDS.north - ABERDEEN_BOUNDS.south,
+      lat: ABERDEEN_CENTER.lat,
+      lng: ABERDEEN_CENTER.lng,
+      key: 'coarse:root',
+      path: 'root'
+    };
+
+    ensureChunkLoaded(initialSpec)
       .then(() => {
         setOsmDebug(prev => ({
           ...prev,
           cacheReady: true,
+          cacheSize: osmTileCacheRef.current.size,
           fetchMs: Math.round(performance.now() - startedAt),
           failed: 0
         }));
@@ -350,7 +483,8 @@ function App() {
       .catch(error => {
         setOsmDebug(prev => ({
           ...prev,
-          cacheReady: false,
+          cacheReady: osmTileCacheRef.current.size > 0,
+          cacheSize: osmTileCacheRef.current.size,
           failed: 1,
           error: error?.message || 'failed to pre-render Aberdeen OSM tile'
         }));
@@ -431,6 +565,7 @@ function App() {
         tileHeight={tile => tile.heightDeg}
         tileAltitude={() => 0.0012}
         tileMaterial={tile => tile.material}
+        tileTransitionDuration={0}
         tileCurvatureResolution={1}
 
         // === NEW: Country polygons + borders ===
@@ -487,7 +622,9 @@ function App() {
         <div>overlay active: {osmDebug.active ? 'yes' : 'no'}</div>
         <div>requested chunks: {osmDebug.requested}</div>
         <div>visible chunks: {osmDebug.visible}</div>
+        <div>lod coarse/med/fine: {osmDebug.coarse}/{osmDebug.medium}/{osmDebug.fine}</div>
         <div>cache ready: {osmDebug.cacheReady ? 'yes' : 'no'}</div>
+        <div>cache size: {osmDebug.cacheSize}</div>
         <div>last fetch: {osmDebug.fetchMs} ms</div>
         <div>failed requests: {osmDebug.failed}</div>
         <div>status: {osmDebug.loading ? 'loading' : 'idle'}</div>
