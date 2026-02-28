@@ -55,3 +55,16 @@ export async function searchOsmAddress(params) {
   }
   return response.json();
 }
+
+export async function fetchRoute(params) {
+  const query = new URLSearchParams();
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) query.set(key, String(value));
+  });
+  const response = await fetch(`${API_BASE_URL}/route?${query.toString()}`);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Route request failed (${response.status}) ${body.slice(0, 180)}`);
+  }
+  return response.json();
+}

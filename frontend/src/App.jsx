@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
-import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, searchOsmAddress } from './services/mobilityApi';
+import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, searchOsmAddress, fetchRoute } from './services/mobilityApi';
 
 const ABERDEEN_BOUNDS = {
   south: 56.85,
@@ -221,6 +221,15 @@ function App() {
   const searchTokenRef = useRef(0);
   const [clickMarker, setClickMarker] = useState(null);
   const [selectedAddressMarker, setSelectedAddressMarker] = useState(null);
+  const [routeState, setRouteState] = useState({
+    start: null,
+    end: null,
+    path: null,
+    loading: false,
+    error: '',
+    distanceMeters: 0,
+    durationSeconds: 0
+  });
   const [countries, setCountries] = useState([]);
   const [countriesByIso3, setCountriesByIso3] = useState(new Map());
 
@@ -702,6 +711,79 @@ function App() {
     resolveNearestRoad({ lat, lng });
   };
 
+  const requestRoute = async (start, end) => {
+    setRouteState(prev => ({
+      ...prev,
+      start,
+      end,
+      path: prev.path,
+      loading: true,
+      error: ''
+    }));
+    try {
+      const payload = await fetchRoute({
+        startLat: start.lat,
+        startLng: start.lng,
+        endLat: end.lat,
+        endLng: end.lng
+      });
+      const points = Array.isArray(payload?.points) ? payload.points : [];
+      const coords = points
+        .map(pair => {
+          const lat = Number(pair?.[0]);
+          const lng = Number(pair?.[1]);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+          return { lat, lng };
+        })
+        .filter(Boolean);
+      if (coords.length < 2) throw new Error('Route geometry was empty.');
+      setRouteState({
+        start,
+        end,
+        path: { id: `route:${Date.now()}`, coords },
+        loading: false,
+        error: '',
+        distanceMeters: Number(payload?.distanceMeters) || 0,
+        durationSeconds: Number(payload?.durationSeconds) || 0
+      });
+    } catch (error) {
+      setRouteState(prev => ({
+        ...prev,
+        loading: false,
+        error: error?.message || 'route request failed'
+      }));
+    }
+  };
+
+  const addRoutePointFromClick = coords => {
+    const lat = Number(coords?.lat);
+    const lng = Number(coords?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const point = { lat, lng };
+    setRouteState(prev => {
+      if (!prev.start || (prev.start && prev.end)) {
+        return {
+          ...prev,
+          start: point,
+          end: null,
+          path: null,
+          error: ''
+        };
+      }
+      return {
+        ...prev,
+        end: point,
+        error: ''
+      };
+    });
+  };
+
+  useEffect(() => {
+    if (!routeState.start || !routeState.end) return;
+    requestRoute(routeState.start, routeState.end);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeState.start?.lat, routeState.start?.lng, routeState.end?.lat, routeState.end?.lng]);
+
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#000' }}>
       <Globe
@@ -729,6 +811,14 @@ function App() {
         labelSize={0.0001}
         labelDotRadius={d => d.dotRadius || 0.0001}
         labelAltitude={d => d.altitude || 0.0003001}
+        pathsData={routeState.path ? [routeState.path] : []}
+        pathPoints={d => d.coords}
+        pathPointLat={p => p.lat}
+        pathPointLng={p => p.lng}
+        pathPointAlt={() => 0.0003002}
+        pathColor={() => '#00ffd0'}
+        pathStroke={3.55}
+        pathTransitionDuration={0}
 
         // CarbonMonitor pixel bitmap overlay
         customLayerData={carbonOverlayData}
@@ -788,6 +878,7 @@ function App() {
         onTileClick={(tile, event, coords) => {
           void tile;
           void event;
+          addRoutePointFromClick(coords);
           resolveNearestRoad(coords, { fromClick: true });
         }}
 
@@ -850,6 +941,13 @@ function App() {
         <div>status: {osmDebug.loading ? 'loading' : 'idle'}</div>
         <div style={{ maxWidth: '340px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           error: {osmDebug.error || '-'}
+        </div>
+        <div style={{ marginTop: '6px' }}>route: {routeState.loading ? 'loading' : routeState.path ? 'ready' : 'idle'}</div>
+        <div>route points: {routeState.start ? 1 : 0}{routeState.end ? ' -> 2' : ''}</div>
+        <div>distance: {routeState.distanceMeters ? `${(routeState.distanceMeters / 1000).toFixed(2)} km` : '-'}</div>
+        <div>duration: {routeState.durationSeconds ? `${Math.round(routeState.durationSeconds / 60)} min` : '-'}</div>
+        <div style={{ maxWidth: '340px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          route error: {routeState.error || '-'}
         </div>
       </div>
 

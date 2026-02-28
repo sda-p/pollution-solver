@@ -154,6 +154,11 @@ curl -X POST http://localhost:3001/osm/features \
     - `aroundLat`, `aroundLng` (optional ranking bias near current map view)
   - Returns: address candidates `{ query, results: [{ displayName, lat, lng, ... }] }`
 
+- `GET /route`
+  - Query:
+    - `startLat`, `startLng`, `endLat`, `endLng` (required numeric coordinates)
+  - Returns: OSRM route payload `{ distanceMeters, durationSeconds, points }`
+
 OSM chunking can be tuned with optional env vars:
 
 - `OVERPASS_FALLBACK_URLS` (comma-separated alternate Overpass endpoints)
@@ -161,6 +166,9 @@ OSM chunking can be tuned with optional env vars:
 - `OVERPASS_MAX_RETRIES` (default `2`)
 - `OSM_CHUNK_CACHE_DIR` (default `cache/osm-chunks`, persisted raster cache on disk)
 - `OSM_CHUNK_DISK_TTL_MS` (default `2592000000` = 30 days)
+- `OSRM_BASE_URL` (default `https://router.project-osrm.org`)
+- `OSRM_PROFILE` (default `driving`)
+- `OSRM_TIMEOUT_MS` (default `9000`)
 
 Frontend helper functions are available in:
 

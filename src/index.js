@@ -5,6 +5,7 @@ import { fetchPollutionInsights } from "./services/pollutionInsights.service.js"
 import { fetchCarbonMonitorHeatmap } from "./services/carbonMonitor.service.js";
 import { fetchOsmChunkBitmap } from "./services/osmChunk.service.js";
 import { fetchNearestRoadAddress, searchOsmAddresses } from "./services/osmReverse.service.js";
+import { fetchOsrmRoute } from "./services/osrm.service.js";
 
 const app = express();
 app.use(cors());
@@ -144,6 +145,19 @@ app.get("/osm/search", async (req, res) => {
       aroundLat: Number.isFinite(aroundLat) ? aroundLat : undefined,
       aroundLng: Number.isFinite(aroundLng) ? aroundLng : undefined,
     });
+    res.json(payload);
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get("/route", async (req, res) => {
+  try {
+    const startLat = Number(req.query.startLat);
+    const startLng = Number(req.query.startLng);
+    const endLat = Number(req.query.endLat);
+    const endLng = Number(req.query.endLng);
+    const payload = await fetchOsrmRoute({ startLat, startLng, endLat, endLng });
     res.json(payload);
   } catch (error) {
     res.status(502).json({ error: error.message });
