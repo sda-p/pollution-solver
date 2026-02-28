@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "description": "Integrates world data and resolves concrete sustainability insights.",
   "main": "src/index.js",
-  "scripts": {
-    "test": "node --test",
+    "scripts": {
+    "dev:backend": "node --watch src/index.js",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "build": "cd frontend && npm run build",
+    "preview": "cd frontend && npm run preview",
+    "test": "node --test",
     "format": "prettier . --write",
     "lint": "eslint ."
   },
@@ -25,5 +29,10 @@
   "devDependencies": {
     "eslint": "^10.0.2",
     "prettier": "^3.8.1"
+  },
+  "dependencies": {
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
   }
 }
