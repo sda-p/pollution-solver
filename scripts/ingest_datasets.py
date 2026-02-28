@@ -2,6 +2,7 @@
 import csv
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -33,13 +34,29 @@ def sh(cmd, env=None, check=True, capture_output=False):
     )
 
 
+def ensure_required_binaries():
+    missing = []
+    if shutil.which(PSQL) is None:
+        missing.append("psql")
+    if shutil.which(PG_ISREADY) is None:
+        missing.append("pg_isready")
+
+    if missing:
+        missing_text = ", ".join(missing)
+        raise RuntimeError(
+            "Missing required PostgreSQL CLI tools: "
+            f"{missing_text}. Install PostgreSQL client tools and ensure they are on PATH."
+        )
+
+
 def get_pg_env():
-    # Bootstrap with current superuser from local initdb, then use postgres role/db.
+    # Bootstrap with postgres credentials expected by this project.
     return {
         **os.environ,
         "PGHOST": os.getenv("PGHOST", "localhost"),
         "PGPORT": os.getenv("PGPORT", "5432"),
-        "PGUSER": os.getenv("PGUSER", os.getenv("USER", "cris")),
+        "PGUSER": os.getenv("PGUSER", "postgres"),
+        "PGPASSWORD": os.getenv("PGPASSWORD", "postgres"),
         "PGDATABASE": os.getenv("PGDATABASE", "postgres"),
     }
 
@@ -190,18 +207,23 @@ TRUNCATE TABLE carbon_monitor_variables, world_bank_indicator_values, dataset_fi
 
     nc_sha = sha256_of_file(nc_path)
     gz_member_name = None
-    with tarfile.open(gz_path, "r:gz") as tf:
-        members = tf.getmembers()
-        if members:
-            gz_member_name = members[0].name
+    gz_insert = ""
+    if gz_path.exists():
+        with tarfile.open(gz_path, "r:gz") as tf:
+            members = tf.getmembers()
+            if members:
+                gz_member_name = members[0].name
+        gz_insert = (
+            f",\n  ('carbon-monitor-graced.gz', 'GZIP+TAR', {gz_path.stat().st_size}, NULL, "
+            f"'tar.gz', '{gz_member_name}', NULL, 'Archive containing the same NetCDF payload')"
+        )
 
     insert_dataset_files = f"""
 INSERT INTO dataset_files (file_name, format, size_bytes, sha256, container_type, extracted_from, record_count, notes)
 VALUES
   ('{XML_FILES[0]}', 'XML', {xml1.stat().st_size}, NULL, NULL, NULL, {totals[XML_FILES[0]]['rows']}, 'World Bank indicator EG.EGY.PRIM.PP.KD'),
   ('{XML_FILES[1]}', 'XML', {xml2.stat().st_size}, NULL, NULL, NULL, {totals[XML_FILES[1]]['rows']}, 'World Bank indicator EG.USE.PCAP.KG.OE'),
-  ('CarbonMonitor_total_y2024_m12.nc', 'NetCDF4/HDF5', {nc_path.stat().st_size}, '{nc_sha}', NULL, NULL, NULL, 'Carbon Monitor gridded CO2 emissions'),
-  ('carbon-monitor-graced.gz', 'GZIP+TAR', {gz_path.stat().st_size}, NULL, 'tar.gz', '{gz_member_name}', NULL, 'Archive containing the same NetCDF payload')
+  ('CarbonMonitor_total_y2024_m12.nc', 'NetCDF4/HDF5', {nc_path.stat().st_size}, '{nc_sha}', NULL, NULL, NULL, 'Carbon Monitor gridded CO2 emissions'){gz_insert}
 ;
 
 INSERT INTO carbon_monitor_variables (file_name, variable_name)
@@ -273,6 +295,7 @@ GROUP BY df.file_name, df.format, df.size_bytes, df.sha256;
 
 
 def main():
+    ensure_required_binaries()
     env = get_pg_env()
     ensure_server_up(env)
     ensure_role_and_database(env)
@@ -292,6 +315,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
     except subprocess.CalledProcessError as exc:
         print(exc.stdout or "", file=sys.stderr)
         print(exc.stderr or "", file=sys.stderr)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +14,15 @@ def sh(cmd, env):
     return subprocess.run(cmd, check=True, text=True, capture_output=True, env=env)
 
 
+def ensure_required_binaries():
+    if shutil.which(PSQL) is None:
+        raise RuntimeError(
+            "Missing required PostgreSQL CLI tool: psql. Install PostgreSQL client tools and ensure psql is on PATH."
+        )
+
+
 def main():
+    ensure_required_binaries()
     env = {
         **os.environ,
         "PGHOST": os.getenv("PGHOST", "localhost"),
@@ -65,6 +74,9 @@ GROUP BY df.file_name, df.format, df.size_bytes;
 if __name__ == "__main__":
     try:
         main()
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
     except subprocess.CalledProcessError as exc:
         print(exc.stdout or "", file=sys.stderr)
         print(exc.stderr or "", file=sys.stderr)

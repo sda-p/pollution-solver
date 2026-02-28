@@ -1,67 +1,199 @@
 # pollution-solver
+
 Integrates world data and resolves concrete sustainability insights.
 
-## PostgreSQL setup
+## What runs in this repo
 
-### 0. Install project dependencies
+- Node.js backend (`src/index.js`) on `http://localhost:3001`
+- React/Vite frontend (`frontend/`) on `http://localhost:5173` (default)
+- PostgreSQL database (`pollution_solver`)
+- Python scripts for dataset ingestion and Carbon Monitor raster export
+
+## Prerequisites
+
+Install these before setup:
+
+1. Node.js 20+ and npm
+2. Python 3.10+
+3. Docker (Docker Desktop on MacOS)
+4. PostgreSQL **server** (or Docker for a Postgres container)
+5. PostgreSQL CLI tools on your host: `psql` and `pg_isready`
+
+For Carbon Monitor rendering (`GET /insights/carbon-monitor`), Python packages are required (see `requirements.txt`).
+
+## Environment setup
+
+1. Install JavaScript dependencies:
 
 ```bash
 npm install
+npm --prefix frontend install
 ```
 
-### 1. Configure environment
+2. Create environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-Default local settings:
+3. Review `.env` values:
 
-- `host`: `localhost`
-- `port`: `5432`
-- `database`: `pollution_solver`
-- `user`: `postgres`
-- `password`: `postgres`
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pollution_solver
+PGHOST=localhost
+PGPORT=5432
+PGDATABASE=pollution_solver
+PGUSER=postgres
+PGPASSWORD=postgres
+OVERPASS_URL=https://overpass-api.de/api/interpreter
+```
 
-### 2. Start PostgreSQL
+The backend now loads `.env` automatically at startup.
 
-Option A (Docker Compose):
+## Python setup
+
+Create and activate a virtual environment, then install Python deps:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Notes:
+
+- `scripts/ingest_datasets.py` and `scripts/test_queries.py` use only Python stdlib.
+- `scripts/export_carbon_heatmap.py` needs `numpy` and `netCDF4`.
+
+MacOS extras:
+
+  brew install libpq
+  echo 'export PATH="/opt/homebrew/opt/libpq/bin:$PATH"' >> ~/.zshrc
+  source ~/.zshrc
+
+  Then verify:
+
+  which psql
+  which pg_isready
+
+  Then run:
+
+  npm run db:ingest
+  npm run db:test
+
+## Database setup
+
+### Option A: Docker Postgres
 
 ```bash
 npm run db:up
 ```
 
-Option B (Homebrew PostgreSQL 16 on macOS):
+### Option B: Local PostgreSQL (example: macOS Homebrew)
 
 ```bash
 brew install postgresql@16
 brew services start postgresql@16
 ```
 
-### 3. Ingest datasets
+Then run ingestion:
 
 ```bash
 npm run db:ingest
-```
-
-The ingestion script is idempotent and will:
-
-- ensure role `postgres` and database `pollution_solver` exist
-- create/update ingestion tables
-- stream-import World Bank XML indicator data
-- register Carbon Monitor NetCDF file metadata
-
-### 4. Smoke-test with queries
-
-```bash
 npm run db:test
 ```
 
-## Database structure
+Ingestion is idempotent. It creates/refreshes:
+
+- `dataset_files`
+- `world_bank_indicator_values`
+- `carbon_monitor_variables`
+
+## Run the app
+
+Run backend + frontend together:
+
+```bash
+npm run dev
+```
+
+Or separately:
+
+```bash
+npm run dev:backend
+npm run dev:frontend
+```
+
+Production-style backend run:
+
+```bash
+npm start
+```
+
+## Verify pollution insights
+
+Check API directly:
+
+```bash
+curl http://localhost:3001/insights
+```
+
+Expected shape:
+
+```json
+{
+  "pollutionPoints": [...],
+  "countryData": {...},
+  "meta": {...}
+}
+```
+
+## Why pollution insights fail to load
+
+`GET /insights` fails when backend cannot query `world_bank_indicator_values`.
+
+Most common causes:
+
+1. PostgreSQL is not running.
+2. Dataset ingestion was never run (or failed).
+3. `psql`/`pg_isready` is missing, so `npm run db:ingest` cannot initialize data.
+4. `.env` values don’t match your local DB instance.
+
+Fast checks:
+
+```bash
+# 1) Verify psql tools exist
+which psql
+which pg_isready
+
+# 2) Verify DB is reachable
+pg_isready -h localhost -p 5432
+
+# 3) Verify data exists
+npm run db:test
+
+# 4) Inspect backend errors
+npm run dev:backend
+```
+
+If ingestion fails because `psql` is missing, install PostgreSQL client tools and rerun `npm run db:ingest`.
+
+## API endpoints
+
+- `GET /insights`
+- `GET /insights/carbon-monitor?stride=8&percentile=99.3`
+- `POST /osm/features`
+- `GET /osm/chunk`
+- `GET /osm/reverse`
+- `GET /osm/search`
+- `POST /routing/route`
+
+Frontend API client is in `frontend/src/services/mobilityApi.js`.
+
+## Database schema
 
 ### `dataset_files`
-
-Catalog of source files loaded into the system.
 
 - `file_name TEXT PRIMARY KEY`
 - `format TEXT NOT NULL`
@@ -73,8 +205,6 @@ Catalog of source files loaded into the system.
 - `notes TEXT`
 
 ### `world_bank_indicator_values`
-
-Country/year values from the two World Bank XML datasets.
 
 - `dataset_file TEXT NOT NULL` (FK -> `dataset_files.file_name`)
 - `country_code TEXT NOT NULL`
@@ -92,81 +222,6 @@ Indexes:
 
 ### `carbon_monitor_variables`
 
-Tracked variables/attributes found in the Carbon Monitor NetCDF payload.
-
 - `file_name TEXT NOT NULL` (FK -> `dataset_files.file_name`)
 - `variable_name TEXT NOT NULL`
 - `PRIMARY KEY (file_name, variable_name)`
-
-## OpenStreetMap setup
-
-This project includes an OpenStreetMap data path via Overpass API (`/osm/features`).
-
-### Verify backend integration
-
-Start backend:
-
-```bash
-npm start
-```
-
-Test OSM features via Overpass proxy:
-
-```bash
-curl -X POST http://localhost:3001/osm/features \
-  -H "content-type: application/json" \
-  -d '{"south":43.73,"west":7.41,"north":43.75,"east":7.45,"amenity":"hospital"}'
-```
-
-### Backend endpoints added
-
-- `GET /insights`
-  - Returns latest country-level World Bank energy-use values from PostgreSQL
-  - Response: `{ pollutionPoints, meta }`
-
-- `GET /insights/carbon-monitor`
-  - Query params (optional): `stride`, `percentile`
-  - Returns downsampled CarbonMonitor NetCDF emissions as an equirectangular RGBA bitmap payload
-  - Response: `{ image: { width, height, rgbaBase64 }, meta }`
-
-- `POST /osm/features`
-  - Body:
-    - `south`, `west`, `north`, `east` (required numeric bbox)
-    - optional filters: `amenity`, `highway`
-  - Returns: Overpass `elements` array
-
-- `GET /osm/chunk`
-  - Query:
-    - `south`, `west`, `north`, `east` (required numeric bbox)
-    - `lod` (`coarse` | `medium` | `fine`, optional)
-    - `pixelSize` (optional)
-  - Returns: road raster chunk payload `{ image: { width, height, rgbaBase64 }, meta }`
-
-- `GET /osm/reverse`
-  - Query:
-    - `lat`, `lng` (required numeric coordinates)
-  - Returns: nearest OSM reverse geocoded address payload `{ addressLine, road, displayName, locality, country, ... }`
-
-- `GET /osm/search`
-  - Query:
-    - `q` (required address/place text)
-    - `limit` (optional, default `6`)
-    - `aroundLat`, `aroundLng` (optional ranking bias near current map view)
-  - Returns: address candidates `{ query, results: [{ displayName, lat, lng, ... }] }`
-
-OSM chunking can be tuned with optional env vars:
-
-- `OVERPASS_FALLBACK_URLS` (comma-separated alternate Overpass endpoints)
-- `OVERPASS_MIN_INTERVAL_MS` (default `900`)
-- `OVERPASS_MAX_RETRIES` (default `2`)
-- `OSM_CHUNK_CACHE_DIR` (default `cache/osm-chunks`, persisted raster cache on disk)
-- `OSM_CHUNK_DISK_TTL_MS` (default `2592000000` = 30 days)
-
-Frontend helper functions are available in:
-
-- `frontend/src/services/mobilityApi.js`
-
-### Troubleshooting
-
-- `docker: unknown command: docker compose`
-  - Install/enable Docker Compose plugin in Docker Desktop.

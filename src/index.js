@@ -6,17 +6,27 @@ import { fetchCarbonMonitorHeatmap } from "./services/carbonMonitor.service.js";
 import { fetchOsmChunkBitmap } from "./services/osmChunk.service.js";
 import { fetchNearestRoadAddress, searchOsmAddresses } from "./services/osmReverse.service.js";
 import { resolveRoute } from "./services/osrmClient.js";
+import { loadLocalEnv } from "./utils/loadEnv.js";
+
+loadLocalEnv();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+function describeError(error) {
+  if (!error) return "unknown error";
+  if (typeof error.message === "string" && error.message.trim()) return error.message;
+  if (typeof error.code === "string" && error.code.trim()) return `code=${error.code}`;
+  return String(error);
+}
 
 app.get("/insights", async (_req, res) => {
   try {
     const payload = await fetchPollutionInsights();
     res.json(payload);
   } catch (error) {
-    console.error("Failed to load pollution insights:", error.message);
+    console.error("Failed to load pollution insights:", describeError(error));
     res.status(503).json({
       error: "Unable to load pollution insights from database.",
       pollutionPoints: [],
@@ -32,7 +42,7 @@ app.get("/insights/carbon-monitor", async (req, res) => {
     });
     res.json(payload);
   } catch (error) {
-    console.error("Failed to load CarbonMonitor heatmap:", error.message);
+    console.error("Failed to load CarbonMonitor heatmap:", describeError(error));
     res.status(503).json({
       error: "Unable to load CarbonMonitor heatmap data.",
       image: null,

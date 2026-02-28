@@ -1,4 +1,7 @@
 import { Pool } from "pg";
+import { loadLocalEnv } from "../utils/loadEnv.js";
+
+loadLocalEnv();
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
-import SidebarWidget from './layout/SidebarWidget.jsx';
-import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, fetchRoute, searchOsmAddress } from './services/mobilityApi';
+import { Link } from 'react-router-dom'; // <--- Add this
+import { Trophy, Globe as GlobeIcon } from 'lucide-react'; // <--- Add this
+import SidebarWidget from './layout/SidebarWidget.jsx';import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, fetchRoute, searchOsmAddress } from './services/mobilityApi';
 
 const ABERDEEN_BOUNDS = {
   south: 56.85,
@@ -291,6 +292,30 @@ function App() {
       return pov.altitude;
     }
     return cameraAltitude;
+  };
+
+
+  // NEW: Achievement Tracking State
+  const [stats, setStats] = useState(() => {
+    const saved = localStorage.getItem('eco_stats');
+    return saved ? JSON.parse(saved) : { routesFound: 0, addressesSearched: 0, countriesExplored: [] };
+  });
+
+  // Update localStorage whenever stats change
+  useEffect(() => {
+    localStorage.setItem('eco_stats', JSON.stringify(stats));
+  }, [stats]);
+
+  // Helper to trigger achievement progress
+  const trackAction = (type, value) => {
+    setStats(prev => {
+      if (type === 'route') return { ...prev, routesFound: prev.routesFound + 1 };
+      if (type === 'search') return { ...prev, addressesSearched: prev.addressesSearched + 1 };
+      if (type === 'country' && !prev.countriesExplored.includes(value)) {
+        return { ...prev, countriesExplored: [...prev.countriesExplored, value] };
+      }
+      return prev;
+    });
   };
 
   useEffect(() => {
@@ -743,6 +768,9 @@ function App() {
 
     globeRef.current?.pointOfView?.({ lat, lng, altitude: 0.04 }, 1200);
     resolveNearestRoad({ lat, lng });
+
+    resolveNearestRoad({ lat, lng });
+    trackAction('search'); // <--- Track successful search
   };
 
   const clearRouteSelection = () => {
@@ -810,6 +838,7 @@ function App() {
         awaiting: 'from',
         geojson: route?.geometry || null
       }));
+      trackAction('route'); // <--- Track successful route trace
     } catch (error) {
       setRouteState(prev => ({
         ...prev,
@@ -841,6 +870,20 @@ function App() {
             <h1 className="text-3xl font-bold tracking-tight text-emerald-50">Pollution Solver</h1>
             <p className="text-xs text-emerald-400/90 -mt-1 uppercase tracking-widest">see • choose • improve</p>
           </div>
+        </div>
+        {/* New Navigation Link */}
+        <div className="navbar-end gap-3">
+          <Link 
+            to="/achievements" 
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-50 hover:bg-emerald-500/20 transition-all"
+          >
+            <Trophy className="w-4 h-4 text-emerald-400" />
+            <span className="text-sm font-semibold">Achievements</span>
+            {/* Badge showing progress */}
+            <span className="bg-emerald-500 text-emerald-950 text-[10px] px-1.5 rounded-full">
+              {stats.routesFound + stats.addressesSearched}
+            </span>
+          </Link>
         </div>
       </div>
 
@@ -981,6 +1024,7 @@ function App() {
           onPolygonRightClick={(d, event) => {
             event?.preventDefault?.();
             setSelectedCountry(d.properties.NAME);
+            trackAction('country', d.properties.NAME); // <--- Track country exploration
           }}
           onPolygonHover={polygon => {
             void polygon;
