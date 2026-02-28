@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
-import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse } from './services/mobilityApi';
+import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, searchOsmAddress } from './services/mobilityApi';
 
 const ABERDEEN_BOUNDS = {
   south: 56.85,
@@ -211,6 +211,16 @@ function App() {
     country: '',
     error: ''
   });
+  const [addressSearch, setAddressSearch] = useState({
+    q: '',
+    loading: false,
+    options: [],
+    selectedIdx: -1,
+    error: ''
+  });
+  const searchTokenRef = useRef(0);
+  const [clickMarker, setClickMarker] = useState(null);
+  const [selectedAddressMarker, setSelectedAddressMarker] = useState(null);
   const [countries, setCountries] = useState([]);
   const [countriesByIso3, setCountriesByIso3] = useState(new Map());
 
@@ -563,10 +573,22 @@ function App() {
     }, 160);
   };
 
-  const resolveNearestRoad = async coords => {
+  const resolveNearestRoad = async (coords, options = {}) => {
     const lat = Number(coords?.lat);
     const lng = Number(coords?.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const fromClick = Boolean(options.fromClick);
+
+    if (fromClick) {
+      setClickMarker({
+        id: `click:${lat.toFixed(5)}:${lng.toFixed(5)}`,
+        lat,
+        lng,
+        color: '#2f9dff',
+        dotRadius: 0.0005,
+        altitude: 0.0003001
+      });
+    }
 
     setOsmLookup({
       loading: true,
@@ -605,6 +627,81 @@ function App() {
     }
   };
 
+  useEffect(() => {
+    const q = addressSearch.q.trim();
+    if (q.length < 3) {
+      setAddressSearch(prev => ({
+        ...prev,
+        loading: false,
+        options: [],
+        selectedIdx: -1,
+        error: ''
+      }));
+      return;
+    }
+
+    const token = searchTokenRef.current + 1;
+    searchTokenRef.current = token;
+    const timer = setTimeout(async () => {
+      try {
+        setAddressSearch(prev => ({ ...prev, loading: true, error: '' }));
+        const pov = globeRef.current?.pointOfView?.() || {};
+        const payload = await searchOsmAddress({
+          q,
+          limit: 7,
+          aroundLat: Number.isFinite(pov?.lat) ? pov.lat : undefined,
+          aroundLng: Number.isFinite(pov?.lng) ? pov.lng : undefined
+        });
+        if (token !== searchTokenRef.current) return;
+        const options = Array.isArray(payload?.results) ? payload.results : [];
+        setAddressSearch(prev => ({
+          ...prev,
+          loading: false,
+          options,
+          selectedIdx: options.length ? 0 : -1,
+          error: ''
+        }));
+      } catch (error) {
+        if (token !== searchTokenRef.current) return;
+        setAddressSearch(prev => ({
+          ...prev,
+          loading: false,
+          options: [],
+          selectedIdx: -1,
+          error: error?.message || 'address search failed'
+        }));
+      }
+    }, 280);
+
+    return () => clearTimeout(timer);
+  }, [addressSearch.q]);
+
+  const goToSearchSelection = () => {
+    const idx = addressSearch.selectedIdx;
+    const option =
+      idx >= 0 && idx < addressSearch.options.length
+        ? addressSearch.options[idx]
+        : addressSearch.options[0];
+    if (!option) return;
+
+    const lat = Number(option.lat);
+    const lng = Number(option.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    setSelectedAddressMarker({
+      id: `${option.osmType || 'osm'}:${option.osmId || 'x'}:${lat.toFixed(5)}:${lng.toFixed(5)}`,
+      lat,
+      lng,
+      title: option.displayName || 'Selected location',
+      color: '#3de56d',
+      dotRadius: 0.0005,
+      altitude: 0.0003001
+    });
+
+    globeRef.current?.pointOfView?.({ lat, lng, altitude: 0.04 }, 1200);
+    resolveNearestRoad({ lat, lng });
+  };
+
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#000' }}>
       <Globe
@@ -624,6 +721,14 @@ function App() {
           ${d.indicatorCode}: ${d.value?.toFixed?.(2) ?? d.value}<br/>
           Year: ${d.year}
         `}
+        labelsData={[clickMarker, selectedAddressMarker].filter(Boolean)}
+        labelLat={d => d.lat}
+        labelLng={d => d.lng}
+        labelText={() => ''}
+        labelColor={d => d.color}
+        labelSize={0.0001}
+        labelDotRadius={d => d.dotRadius || 0.0001}
+        labelAltitude={d => d.altitude || 0.0003001}
 
         // CarbonMonitor pixel bitmap overlay
         customLayerData={carbonOverlayData}
@@ -659,13 +764,13 @@ function App() {
           }
           scheduleOsmOverlayUpdate(pov);
         }}
-        onGlobeClick={coords => {
-          resolveNearestRoad(coords);
-        }}
+        onGlobeClick={() => {}}
         pointerEventsFilter={(obj, data) => {
           void obj;
-          if (data?.layerType === 'osm-tile') return false;
+          if (data?.layerType === 'osm-tile') return true;
           if (data?.layerType === 'carbon-overlay') return false;
+          // Keep polygon meshes from hijacking tile clicks; use onTileClick coords instead.
+          if (data?.geometry && data?.properties) return false;
           return true;
         }}
 
@@ -675,11 +780,16 @@ function App() {
         tileLng={tile => tile.lng}
         tileWidth={tile => tile.widthDeg}
         tileHeight={tile => tile.heightDeg}
-        tileAltitude={() => 0.0012}
+        tileAltitude={() => 0.0003}
         tileMaterial={tile => tile.material}
         tilesTransitionDuration={0}
         tileTransitionDuration={0}
         tileCurvatureResolution={1}
+        onTileClick={(tile, event, coords) => {
+          void tile;
+          void event;
+          resolveNearestRoad(coords, { fromClick: true });
+        }}
 
         // === NEW: Country polygons + borders ===
         polygonsData={countries}
@@ -691,9 +801,7 @@ function App() {
         polygonLabel={d => `<b>${d.properties.NAME}</b>`} // hover tooltip
 
         // === Interactivity ===
-        onPolygonClick={(_polygon, _event, coords) => {
-          resolveNearestRoad(coords);
-        }}
+        onPolygonClick={() => {}}
         onPolygonHover={polygon => {
           void polygon;
         }}
@@ -742,6 +850,117 @@ function App() {
         <div>status: {osmDebug.loading ? 'loading' : 'idle'}</div>
         <div style={{ maxWidth: '340px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           error: {osmDebug.error || '-'}
+        </div>
+      </div>
+
+      <div style={{
+        position: 'absolute',
+        top: 130,
+        left: 20,
+        color: '#ebf7ff',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        lineHeight: 1.45,
+        background: 'rgba(8, 18, 30, 0.86)',
+        border: '1px solid rgba(120, 180, 220, 0.35)',
+        padding: '10px 12px',
+        borderRadius: '8px',
+        minWidth: '360px',
+        maxWidth: '520px'
+      }}>
+        <div>Address Search</div>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+          <input
+            type='text'
+            value={addressSearch.q}
+            onChange={event => {
+              const next = event.target.value;
+              setAddressSearch(prev => ({ ...prev, q: next }));
+            }}
+            onKeyDown={event => {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                setAddressSearch(prev => ({
+                  ...prev,
+                  selectedIdx:
+                    prev.options.length === 0 ? -1 : Math.min(prev.selectedIdx + 1, prev.options.length - 1)
+                }));
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                setAddressSearch(prev => ({
+                  ...prev,
+                  selectedIdx: prev.options.length === 0 ? -1 : Math.max(prev.selectedIdx - 1, 0)
+                }));
+              } else if (event.key === 'Enter') {
+                event.preventDefault();
+                goToSearchSelection();
+              }
+            }}
+            placeholder='Type an address...'
+            style={{
+              flex: 1,
+              minWidth: 0,
+              borderRadius: '6px',
+              border: '1px solid rgba(140, 190, 220, 0.55)',
+              background: 'rgba(9, 20, 34, 0.95)',
+              color: '#e9f5ff',
+              padding: '7px 8px',
+              outline: 'none'
+            }}
+          />
+          <button
+            onClick={goToSearchSelection}
+            disabled={addressSearch.options.length === 0}
+            style={{
+              borderRadius: '6px',
+              border: '1px solid rgba(150, 205, 235, 0.7)',
+              background: addressSearch.options.length ? 'rgba(36, 90, 126, 0.95)' : 'rgba(58, 68, 78, 0.7)',
+              color: '#f4fbff',
+              padding: '7px 10px',
+              cursor: addressSearch.options.length ? 'pointer' : 'default'
+            }}
+          >
+            Go
+          </button>
+        </div>
+        <div style={{ marginTop: '6px' }}>status: {addressSearch.loading ? 'searching...' : 'idle'}</div>
+        <div style={{
+          marginTop: '6px',
+          maxHeight: '132px',
+          overflowY: 'auto',
+          border: '1px solid rgba(120, 180, 220, 0.28)',
+          borderRadius: '6px',
+          background: 'rgba(7, 16, 28, 0.95)'
+        }}>
+          {addressSearch.options.length === 0 ? (
+            <div style={{ padding: '8px', opacity: 0.78 }}>
+              {addressSearch.q.trim().length < 3 ? 'Type at least 3 characters' : 'No matches'}
+            </div>
+          ) : (
+            addressSearch.options.map((item, idx) => (
+              <button
+                key={`${item.osmType || 'osm'}-${item.osmId || idx}-${idx}`}
+                onClick={() => setAddressSearch(prev => ({ ...prev, selectedIdx: idx }))}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  fontFamily: 'monospace',
+                  fontSize: '12px',
+                  color: '#e8f7ff',
+                  border: 'none',
+                  borderBottom: idx === addressSearch.options.length - 1 ? 'none' : '1px solid rgba(120, 180, 220, 0.16)',
+                  background: idx === addressSearch.selectedIdx ? 'rgba(42, 94, 128, 0.55)' : 'transparent',
+                  padding: '7px 8px',
+                  cursor: 'pointer'
+                }}
+              >
+                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.displayName}</div>
+              </button>
+            ))
+          )}
+        </div>
+        <div style={{ marginTop: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          error: {addressSearch.error || '-'}
         </div>
       </div>
 

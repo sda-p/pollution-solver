@@ -4,7 +4,7 @@ import { fetchOsmElements } from "./services/osmClient.js";
 import { fetchPollutionInsights } from "./services/pollutionInsights.service.js";
 import { fetchCarbonMonitorHeatmap } from "./services/carbonMonitor.service.js";
 import { fetchOsmChunkBitmap } from "./services/osmChunk.service.js";
-import { fetchNearestRoadAddress } from "./services/osmReverse.service.js";
+import { fetchNearestRoadAddress, searchOsmAddresses } from "./services/osmReverse.service.js";
 
 const app = express();
 app.use(cors());
@@ -120,6 +120,30 @@ app.get("/osm/reverse", async (req, res) => {
     }
 
     const payload = await fetchNearestRoadAddress({ lat, lng });
+    res.json(payload);
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get("/osm/search", async (req, res) => {
+  try {
+    const q = typeof req.query.q === "string" ? req.query.q : "";
+    const limit = Number(req.query.limit);
+    const aroundLat = Number(req.query.aroundLat);
+    const aroundLng = Number(req.query.aroundLng);
+
+    if (!q.trim()) {
+      res.status(400).json({ error: "Missing query. Provide q." });
+      return;
+    }
+
+    const payload = await searchOsmAddresses({
+      q,
+      limit: Number.isFinite(limit) ? limit : undefined,
+      aroundLat: Number.isFinite(aroundLat) ? aroundLat : undefined,
+      aroundLng: Number.isFinite(aroundLng) ? aroundLng : undefined,
+    });
     res.json(payload);
   } catch (error) {
     res.status(502).json({ error: error.message });

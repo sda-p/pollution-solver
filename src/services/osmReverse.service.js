@@ -1,5 +1,7 @@
 const NOMINATIM_URL =
   process.env.OSM_NOMINATIM_URL || "https://nominatim.openstreetmap.org/reverse";
+const NOMINATIM_SEARCH_URL =
+  process.env.OSM_NOMINATIM_SEARCH_URL || "https://nominatim.openstreetmap.org/search";
 const NOMINATIM_USER_AGENT =
   process.env.OSM_NOMINATIM_USER_AGENT || "pollution-solver/1.0 (local dev)";
 const NOMINATIM_TIMEOUT_MS = Math.max(1500, Number(process.env.OSM_NOMINATIM_TIMEOUT_MS || 9000));
@@ -73,6 +75,72 @@ export async function fetchNearestRoadAddress({ lat, lng }) {
     if (error?.name === "AbortError") {
       throw new Error("OSM reverse geocode timed out.");
     }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function searchOsmAddresses({ q, limit = 6, aroundLat, aroundLng }) {
+  const query = String(q || "").trim();
+  if (!query) return { query: "", results: [] };
+
+  const maxResults = Math.min(12, Math.max(1, Math.trunc(Number(limit) || 6)));
+  const url = new URL(NOMINATIM_SEARCH_URL);
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("q", query);
+  url.searchParams.set("addressdetails", "1");
+  url.searchParams.set("limit", String(maxResults));
+
+  const biasLat = asNumber(aroundLat);
+  const biasLng = asNumber(aroundLng);
+  if (Number.isFinite(biasLat) && Number.isFinite(biasLng)) {
+    // Bias ranking near current view without hard-bounding search results.
+    const dx = 3.5;
+    const dy = 2.2;
+    url.searchParams.set("viewbox", `${biasLng - dx},${biasLat + dy},${biasLng + dx},${biasLat - dy}`);
+    url.searchParams.set("bounded", "0");
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), NOMINATIM_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        "user-agent": NOMINATIM_USER_AGENT,
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`OSM address search failed (${response.status}): ${text.slice(0, 160)}`);
+    }
+
+    const payload = await response.json();
+    const results = Array.isArray(payload)
+      ? payload
+          .map((item) => {
+            const lat = asNumber(item?.lat);
+            const lng = asNumber(item?.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            return {
+              displayName: item?.display_name || "",
+              lat,
+              lng,
+              class: item?.class || null,
+              type: item?.type || null,
+              importance: asNumber(item?.importance),
+              osmType: item?.osm_type || null,
+              osmId: item?.osm_id || null,
+            };
+          })
+          .filter(Boolean)
+      : [];
+
+    return { query, results };
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("OSM address search timed out.");
     throw error;
   } finally {
     clearTimeout(timer);

@@ -147,6 +147,13 @@ curl -X POST http://localhost:3001/osm/features \
     - `lat`, `lng` (required numeric coordinates)
   - Returns: nearest OSM reverse geocoded address payload `{ addressLine, road, displayName, locality, country, ... }`
 
+- `GET /osm/search`
+  - Query:
+    - `q` (required address/place text)
+    - `limit` (optional, default `6`)
+    - `aroundLat`, `aroundLng` (optional ranking bias near current map view)
+  - Returns: address candidates `{ query, results: [{ displayName, lat, lng, ... }] }`
+
 OSM chunking can be tuned with optional env vars:
 
 - `OVERPASS_FALLBACK_URLS` (comma-separated alternate Overpass endpoints)
