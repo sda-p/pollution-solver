@@ -142,6 +142,11 @@ curl -X POST http://localhost:3001/osm/features \
     - `pixelSize` (optional)
   - Returns: road raster chunk payload `{ image: { width, height, rgbaBase64 }, meta }`
 
+- `GET /osm/reverse`
+  - Query:
+    - `lat`, `lng` (required numeric coordinates)
+  - Returns: nearest OSM reverse geocoded address payload `{ addressLine, road, displayName, locality, country, ... }`
+
 OSM chunking can be tuned with optional env vars:
 
 - `OVERPASS_FALLBACK_URLS` (comma-separated alternate Overpass endpoints)

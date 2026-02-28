@@ -4,6 +4,7 @@ import { fetchOsmElements } from "./services/osmClient.js";
 import { fetchPollutionInsights } from "./services/pollutionInsights.service.js";
 import { fetchCarbonMonitorHeatmap } from "./services/carbonMonitor.service.js";
 import { fetchOsmChunkBitmap } from "./services/osmChunk.service.js";
+import { fetchNearestRoadAddress } from "./services/osmReverse.service.js";
 
 const app = express();
 app.use(cors());
@@ -99,6 +100,26 @@ app.get("/osm/chunk", async (req, res) => {
       lod,
       pixelSize: Number.isFinite(pixelSize) ? pixelSize : undefined,
     });
+    res.json(payload);
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get("/osm/reverse", async (req, res) => {
+  try {
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      res.status(400).json({ error: "Invalid coordinates. Provide numeric lat and lng." });
+      return;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      res.status(400).json({ error: "Coordinates out of range. Expected lat [-90,90], lng [-180,180]." });
+      return;
+    }
+
+    const payload = await fetchNearestRoadAddress({ lat, lng });
     res.json(payload);
   } catch (error) {
     res.status(502).json({ error: error.message });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
-import { API_BASE_URL, fetchOsmChunk } from './services/mobilityApi';
+import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse } from './services/mobilityApi';
 
 const ABERDEEN_BOUNDS = {
   south: 56.85,
@@ -200,6 +200,16 @@ function App() {
     failed: 0,
     error: '',
     active: false
+  });
+  const [osmLookup, setOsmLookup] = useState({
+    loading: false,
+    lat: null,
+    lng: null,
+    addressLine: '',
+    displayName: '',
+    locality: '',
+    country: '',
+    error: ''
   });
   const [countries, setCountries] = useState([]);
   const [countriesByIso3, setCountriesByIso3] = useState(new Map());
@@ -553,6 +563,48 @@ function App() {
     }, 160);
   };
 
+  const resolveNearestRoad = async coords => {
+    const lat = Number(coords?.lat);
+    const lng = Number(coords?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    setOsmLookup({
+      loading: true,
+      lat,
+      lng,
+      addressLine: '',
+      displayName: '',
+      locality: '',
+      country: '',
+      error: ''
+    });
+
+    try {
+      const data = await fetchOsmReverse({ lat, lng });
+      setOsmLookup({
+        loading: false,
+        lat,
+        lng,
+        addressLine: data?.addressLine || data?.road || '',
+        displayName: data?.displayName || '',
+        locality: data?.locality || '',
+        country: data?.country || '',
+        error: ''
+      });
+    } catch (error) {
+      setOsmLookup({
+        loading: false,
+        lat,
+        lng,
+        addressLine: '',
+        displayName: '',
+        locality: '',
+        country: '',
+        error: error?.message || 'reverse geocoding failed'
+      });
+    }
+  };
+
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#000' }}>
       <Globe
@@ -607,6 +659,9 @@ function App() {
           }
           scheduleOsmOverlayUpdate(pov);
         }}
+        onGlobeClick={coords => {
+          resolveNearestRoad(coords);
+        }}
         pointerEventsFilter={(obj, data) => {
           void obj;
           if (data?.layerType === 'osm-tile') return false;
@@ -636,9 +691,8 @@ function App() {
         polygonLabel={d => `<b>${d.properties.NAME}</b>`} // hover tooltip
 
         // === Interactivity ===
-        onPolygonClick={polygon => {
-          alert(`You clicked: ${polygon.properties.NAME}\n\nAdd your pollution insight here!`);
-          // TODO: open a modal with real data for that country
+        onPolygonClick={(_polygon, _event, coords) => {
+          resolveNearestRoad(coords);
         }}
         onPolygonHover={polygon => {
           void polygon;
@@ -688,6 +742,39 @@ function App() {
         <div>status: {osmDebug.loading ? 'loading' : 'idle'}</div>
         <div style={{ maxWidth: '340px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           error: {osmDebug.error || '-'}
+        </div>
+      </div>
+
+      <div style={{
+        position: 'absolute',
+        bottom: 20,
+        right: 20,
+        color: '#e7f5ff',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        lineHeight: 1.45,
+        background: 'rgba(8, 18, 30, 0.84)',
+        border: '1px solid rgba(120, 180, 220, 0.35)',
+        padding: '10px 12px',
+        borderRadius: '8px',
+        minWidth: '300px',
+        maxWidth: '430px',
+        pointerEvents: 'none'
+      }}>
+        <div>Nearest OSM Road</div>
+        <div>coords: {Number.isFinite(osmLookup.lat) ? osmLookup.lat.toFixed(5) : '-'}, {Number.isFinite(osmLookup.lng) ? osmLookup.lng.toFixed(5) : '-'}</div>
+        <div>status: {osmLookup.loading ? 'resolving...' : 'idle'}</div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          road: {osmLookup.addressLine || '-'}
+        </div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          locality: {[osmLookup.locality, osmLookup.country].filter(Boolean).join(', ') || '-'}
+        </div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          label: {osmLookup.displayName || '-'}
+        </div>
+        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          error: {osmLookup.error || '-'}
         </div>
       </div>
     </div>
