@@ -4,13 +4,14 @@ import Globe from 'react-globe.gl';
 function App() {
   const [pointsData, setPointsData] = useState([]);
   const [countries, setCountries] = useState([]);
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
-  // Load pollution points from your backend
+  // Load pollution points from backend (Carbon Monitor points in Postgres)
   useEffect(() => {
-    fetch('http://localhost:3001/insights')
+    fetch(`${apiBaseUrl}/insights`)
       .then(res => res.json())
       .then(data => setPointsData(data.pollutionPoints || []));
-  }, []);
+  }, [apiBaseUrl]);
 
   // Load real country borders (GeoJSON)
   useEffect(() => {
@@ -31,7 +32,12 @@ function App() {
         pointLng={d => d.lng}
         pointColor={d => d.color || '#ff4444'}
         pointAltitude={d => d.size}
-        pointRadius={0.5}
+        pointRadius={0.18}
+        pointLabel={d => `
+          <b>Carbon hotspot</b><br/>
+          Monthly emission: ${Number(d.monthlyEmission || 0).toFixed(3)}<br/>
+          Max daily emission: ${Number(d.maxDailyEmission || 0).toFixed(3)}
+        `}
 
         // === NEW: Country polygons + borders ===
         polygonsData={countries}
@@ -65,7 +71,7 @@ function App() {
         pointerEvents: 'none'
       }}>
         <h1>Pollution Solver 🌍</h1>
-        <p>Click any country • Red dots = pollution hotspots</p>
+        <p>Carbon Monitor hotspots from Postgres • click countries for drilldown</p>
       </div>
     </div>
   );

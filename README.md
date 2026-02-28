@@ -97,3 +97,131 @@ Tracked variables/attributes found in the Carbon Monitor NetCDF payload.
 - `file_name TEXT NOT NULL` (FK -> `dataset_files.file_name`)
 - `variable_name TEXT NOT NULL`
 - `PRIMARY KEY (file_name, variable_name)`
+
+## OpenStreetMap + GraphHopper setup
+
+This project now includes:
+
+- OpenStreetMap data ingestion path via Overpass API (`/osm/features`)
+- A local GraphHopper routing engine service (`/routing/route`)
+- Frontend API helpers for future globe/routing integration
+
+### 0. Prerequisites
+
+- Docker Desktop installed and running
+- Docker Compose available (`docker compose version`)
+- Root dependencies installed:
+
+```bash
+npm install
+```
+
+### 1. Configure routing-related env vars
+
+Already included in `.env.example`:
+
+- `OVERPASS_URL` (default `https://overpass-api.de/api/interpreter`)
+- `GRAPHHOPPER_BASE_URL` (default `http://localhost:8989`)
+- `GRAPHHOPPER_PROFILE` (default `car`)
+- `GRAPHHOPPER_API_KEY` (optional)
+- `GRAPHHOPPER_OSM_FILE` (default `/data/osm/monaco-latest.osm.pbf`)
+
+If `.env` does not exist:
+
+```bash
+cp .env.example .env
+```
+
+### 2. Download an OSM extract
+
+Default (Monaco):
+
+```bash
+npm run osm:download
+```
+
+Or provide any `.osm.pbf` URL:
+
+```bash
+bash scripts/download_osm_extract.sh https://download.geofabrik.de/europe/france-latest.osm.pbf
+```
+
+### 3. Start GraphHopper
+
+```bash
+npm run routing:up
+```
+
+First start imports the OSM file and can take time depending on extract size.
+
+Tail logs:
+
+```bash
+npm run routing:logs
+```
+
+Stop service:
+
+```bash
+npm run routing:down
+```
+
+### 4. Verify GraphHopper directly
+
+```bash
+curl "http://localhost:8989/route?point=43.7384,7.4246&point=43.7316,7.4198&profile=car&points_encoded=false"
+```
+
+Expected: JSON response with `paths[0].distance`, `paths[0].time`, and route geometry.
+
+### 5. Verify backend integration
+
+Start backend:
+
+```bash
+npm start
+```
+
+Test route via project API:
+
+```bash
+curl -X POST http://localhost:3001/routing/route \
+  -H "content-type: application/json" \
+  -d '{"fromLat":43.7384,"fromLng":7.4246,"toLat":43.7316,"toLng":7.4198,"profile":"car"}'
+```
+
+Test OSM features via Overpass proxy:
+
+```bash
+curl -X POST http://localhost:3001/osm/features \
+  -H "content-type: application/json" \
+  -d '{"south":43.73,"west":7.41,"north":43.75,"east":7.45,"amenity":"hospital"}'
+```
+
+### 6. Backend endpoints added
+
+- `POST /osm/features`
+  - Body:
+    - `south`, `west`, `north`, `east` (required numeric bbox)
+    - optional filters: `amenity`, `highway`
+  - Returns: Overpass `elements` array
+
+- `POST /routing/route`
+  - Body:
+    - `fromLat`, `fromLng`, `toLat`, `toLng` (required numeric coords)
+    - optional `profile` (`car`, `bike`, `foot`, etc. configured in GraphHopper)
+  - Returns: GraphHopper route response
+
+Frontend helper functions are available in:
+
+- `frontend/src/services/mobilityApi.js`
+
+### Troubleshooting
+
+- `docker: unknown command: docker compose`
+  - Install/enable Docker Compose plugin in Docker Desktop.
+- GraphHopper not reachable on `localhost:8989`
+  - Check container state with `docker compose --profile routing ps`.
+  - Inspect logs with `npm run routing:logs`.
+- Slow first startup
+  - Normal for larger `.osm.pbf` files while GraphHopper builds graph cache in `routing/graph-cache`.

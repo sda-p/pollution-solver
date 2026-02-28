@@ -3,22 +3,27 @@
   "version": "1.0.0",
   "description": "Integrates world data and resolves concrete sustainability insights.",
   "main": "src/index.js",
-    "scripts": {
+  "scripts": {
     "dev:backend": "node --watch src/index.js",
-    "dev:frontend": "cd frontend && npm run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
-    "db:ingest": "python3 scripts/ingest_datasets.py",
+    "db:ingest:base": "python3 scripts/ingest_datasets.py",
+    "db:ingest:carbon": "python3 tools/ingest_carbon_monitor_points.py",
+    "db:ingest": "npm run db:ingest:base && npm run db:ingest:carbon",
     "db:test": "python3 scripts/test_queries.py",
-    "build": "cd frontend && npm run build",
-    "preview": "cd frontend && npm run preview",
+    "routing:up": "docker compose --profile routing up -d graphhopper",
+    "routing:down": "docker compose --profile routing stop graphhopper",
+    "routing:logs": "docker compose --profile routing logs -f graphhopper",
+    "osm:download": "bash scripts/download_osm_extract.sh",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview",
     "test": "node --test",
     "format": "prettier . --write",
-    "lint": "eslint ."
+    "lint": "eslint . && npm --prefix frontend run lint"
   },
   "repository": {
     "type": "git",
@@ -33,15 +38,13 @@
   },
   "homepage": "https://github.com/sda-p/pollution-solver#readme",
   "dependencies": {
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "pg": "^8.16.3"
   },
   "devDependencies": {
     "eslint": "^10.0.2",
     "prettier": "^3.8.1"
-  },
-  "dependencies": {
-    "concurrently": "^9.2.1",
-    "cors": "^2.8.6",
-    "express": "^5.2.1"
   }
 }
