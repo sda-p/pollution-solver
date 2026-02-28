@@ -827,7 +827,7 @@ function App() {
   const getCountryColor = countryName => {
     const data = countryData[countryName];
     if (!data) return 'rgba(100,100,100,0.25)';
-    const score = Math.min(data.pm25, 100);
+    const score = Math.min(data.energyUsePerCapitaKgOe || 0, 15000) / 150;
     const hue = 120 - score * 1.2;
     return `hsla(${hue}, 88%, 58%, 0.74)`;
   };
@@ -942,7 +942,7 @@ function App() {
             void obj;
             if (data?.layerType === 'osm-tile') return true;
             if (data?.layerType === 'carbon-overlay') return false;
-            if (data?.geometry && data?.properties) return false;
+            if (data?.geometry && data?.properties) return true;
             return true;
           }}
           tilesData={osmTiles}
@@ -972,7 +972,16 @@ function App() {
           }
           polygonAltitude={polygonAltitudeFromCamera(cameraAltitude)}
           polygonLabel={d => `<b>${d.properties.NAME}</b>`}
-          onPolygonClick={d => setSelectedCountry(d.properties.NAME)}
+          onPolygonClick={(d, event, coords) => {
+            void d;
+            void event;
+            resolveNearestRoad(coords, { fromClick: true });
+            pickRoutePoint(coords);
+          }}
+          onPolygonRightClick={(d, event) => {
+            event?.preventDefault?.();
+            setSelectedCountry(d.properties.NAME);
+          }}
           onPolygonHover={polygon => {
             void polygon;
           }}
@@ -1136,12 +1145,26 @@ function App() {
                 <div className="space-y-6 mb-8">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="p-4 bg-emerald-900/30 rounded-2xl border border-emerald-800/50">
-                      <div className="text-emerald-400 text-xs uppercase font-bold tracking-tighter">PM2.5 Level</div>
-                      <div className="text-4xl font-bold text-red-400 mt-1">{countryData[selectedCountry].pm25}</div>
+                      <div className="text-emerald-400 text-xs uppercase font-bold tracking-tighter">Energy Use / Capita</div>
+                      <div className="text-2xl font-bold text-red-400 mt-1">
+                        {Number.isFinite(countryData[selectedCountry].energyUsePerCapitaKgOe)
+                          ? countryData[selectedCountry].energyUsePerCapitaKgOe.toFixed(2)
+                          : '-'}
+                      </div>
+                      <div className="mt-1 text-[10px] text-emerald-300/80">
+                        {countryData[selectedCountry].energyUseYear || '-'} • kg oil eq.
+                      </div>
                     </div>
                     <div className="p-4 bg-emerald-900/30 rounded-2xl border border-emerald-800/50">
-                      <div className="text-emerald-400 text-xs uppercase font-bold tracking-tighter">AQI Index</div>
-                      <div className="text-4xl font-bold text-orange-400 mt-1">{countryData[selectedCountry].aqi}</div>
+                      <div className="text-emerald-400 text-xs uppercase font-bold tracking-tighter">Primary Energy PPP</div>
+                      <div className="text-2xl font-bold text-orange-400 mt-1">
+                        {Number.isFinite(countryData[selectedCountry].primaryEnergyPerPppKd)
+                          ? countryData[selectedCountry].primaryEnergyPerPppKd.toFixed(3)
+                          : '-'}
+                      </div>
+                      <div className="mt-1 text-[10px] text-emerald-300/80">
+                        {countryData[selectedCountry].primaryEnergyYear || '-'} • indicator scale
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1151,7 +1174,7 @@ function App() {
                 </div>
               )}
 
-              <SidebarWidget location={selectedCountry} />
+              <SidebarWidget location={selectedCountry} countryMetrics={countryData[selectedCountry]} />
             </div>
           )}
         </div>

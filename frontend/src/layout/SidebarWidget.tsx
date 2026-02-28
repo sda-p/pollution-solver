@@ -1,112 +1,124 @@
-import { Footprints, Bike, Bus, Car, Leaf, Flame, Clock, ChevronRight } from 'lucide-react';
+import { Activity, BarChart3, Gauge, Leaf } from 'lucide-react';
 
-export default function SidebarWidget({ location }) {
+export default function SidebarWidget({ location, countryMetrics }) {
   if (!location) return null;
+  const energyUse = countryMetrics?.energyUsePerCapitaKgOe;
+  const energyUseYear = countryMetrics?.energyUseYear;
+  const energyUseName =
+    countryMetrics?.energyUseIndicatorName || 'Energy use (kg of oil equivalent per capita)';
+  const primaryEnergy = countryMetrics?.primaryEnergyPerPppKd;
+  const primaryEnergyYear = countryMetrics?.primaryEnergyYear;
+  const primaryEnergyName =
+    countryMetrics?.primaryEnergyIndicatorName ||
+    'Primary energy indicator (PPP-adjusted constant dollars)';
+  const carbIntensityScore = countryMetrics?.carbIntensityScore;
+  const normalizedEnergyUse = countryMetrics?.normalizedEnergyUse;
 
-  const transportOptions = [
-    {
-      mode: 'Walk',
-      icon: <Footprints className="w-5 h-5" />,
-      time: '25 min',
-      sustainability: 100,
-      calories: 120,
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-400/10'
-    },
-    {
-      mode: 'Cycle',
-      icon: <Bike className="w-5 h-5" />,
-      time: '12 min',
-      sustainability: 92,
-      calories: 185,
-      color: 'text-cyan-400',
-      bg: 'bg-cyan-400/10'
-    },
-    {
-      mode: 'Public Transport',
-      icon: <Bus className="w-5 h-5" />,
-      time: '18 min',
-      sustainability: 75,
-      calories: 45,
-      color: 'text-orange-400',
-      bg: 'bg-orange-400/10'
-    },
-    {
-      mode: 'Car',
-      icon: <Car className="w-5 h-5" />,
-      time: '10 min',
-      sustainability: 15,
-      calories: 12,
-      color: 'text-rose-400',
-      bg: 'bg-rose-400/10'
-    },
-  ];
+  const gaugeWidth = Number.isFinite(normalizedEnergyUse)
+    ? `${Math.max(2, Math.min(100, Math.round(normalizedEnergyUse * 100)))}%`
+    : '2%';
+  const pressureLabel = Number.isFinite(carbIntensityScore)
+    ? carbIntensityScore >= 66
+      ? 'High'
+      : carbIntensityScore >= 33
+        ? 'Medium'
+        : 'Low'
+    : 'Unknown';
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between px-1">
-        <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-500">Transport Options</h4>
-        <span className="text-[10px] text-emerald-400/50">Estimates for {location}</span>
+        <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-500">Country Energy Metrics</h4>
+        <span className="text-[10px] text-emerald-400/50">{location}</span>
       </div>
-      
+
       <div className="space-y-3">
-        {transportOptions.map((option) => (
-          <div 
-            key={option.mode}
-            className="group relative overflow-hidden p-4 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-emerald-500/40 hover:bg-white/[0.06] transition-all cursor-pointer"
-          >
-            {/* Top Row: Icon, Name, and Time */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl ${option.bg} ${option.color}`}>
-                  {option.icon}
-                </div>
-                <div>
-                  <span className="block font-bold text-emerald-50 tracking-wide">{option.mode}</span>
-                  <div className="flex items-center gap-1 text-[11px] text-emerald-400/70">
-                    <Clock className="w-3 h-3" />
-                    {option.time}
-                  </div>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-emerald-800 group-hover:text-emerald-400 transition-colors" />
+        <div className="relative overflow-hidden p-4 rounded-2xl bg-white/[0.03] border border-white/5">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 rounded-xl bg-red-500/10 text-red-300">
+              <Activity className="w-5 h-5" />
             </div>
-
-            {/* Bottom Row: Stats Bars */}
-            <div className="grid grid-cols-2 gap-6 pt-2 border-t border-white/5">
-              {/* Sustainability */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="flex items-center gap-1 text-[10px] font-bold uppercase text-emerald-500/80">
-                    <Leaf className="w-2.5 h-2.5" /> Eco
-                  </span>
-                  <span className="text-[10px] font-mono text-emerald-200">{option.sustainability}%</span>
-                </div>
-                <div className="w-full bg-emerald-950/50 rounded-full h-1">
-                  <div 
-                    className="bg-emerald-500 h-1 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.4)] transition-all duration-1000" 
-                    style={{ width: `${option.sustainability}%` }}
-                  ></div>
-                </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-red-200/80">
+                {countryMetrics?.energyUseIndicatorCode || 'EG.USE.PCAP.KG.OE'}
               </div>
-
-              {/* Calories */}
-              <div className="flex flex-col justify-center">
-                <span className="flex items-center gap-1 text-[10px] font-bold uppercase text-orange-500/80 mb-1">
-                  <Flame className="w-2.5 h-2.5" /> Burn
-                </span>
-                <span className="text-sm font-bold text-emerald-50">
-                  {option.calories} <span className="text-[10px] font-normal text-emerald-400/50 ml-0.5">kcal</span>
-                </span>
+              <div className="mt-1 text-sm font-semibold text-emerald-50">{energyUseName}</div>
+              <div className="mt-2 text-2xl font-bold text-red-300">
+                {Number.isFinite(energyUse) ? energyUse.toFixed(2) : '-'}
               </div>
+              <div className="text-[11px] text-emerald-300/70">Year: {energyUseYear || '-'} • kg oil eq./capita</div>
             </div>
           </div>
-        ))}
+        </div>
+
+        <div className="relative overflow-hidden p-4 rounded-2xl bg-white/[0.03] border border-white/5">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-300">
+              <BarChart3 className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-cyan-200/80">
+                {countryMetrics?.primaryEnergyIndicatorCode || 'EG.EGY.PRIM.PP.KD'}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-emerald-50">{primaryEnergyName}</div>
+              <div className="mt-2 text-2xl font-bold text-cyan-300">
+                {Number.isFinite(primaryEnergy) ? primaryEnergy.toFixed(3) : '-'}
+              </div>
+              <div className="text-[11px] text-emerald-300/70">Year: {primaryEnergyYear || '-'} • PPP metric</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="relative overflow-hidden p-4 rounded-2xl bg-white/[0.03] border border-white/5">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-300">
+              <Gauge className="w-4 h-4" />
+            </div>
+            <div className="text-xs font-bold uppercase tracking-wider text-amber-200/80">Carbonization Pressure</div>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <div className="text-2xl font-bold text-amber-200">{Number.isFinite(carbIntensityScore) ? `${carbIntensityScore}` : '-'}</div>
+            <div className="text-xs font-semibold text-amber-100/80">{pressureLabel}</div>
+          </div>
+          <div className="mt-2 h-1.5 rounded-full bg-emerald-950/70">
+            <div
+              className="h-1.5 rounded-full bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.5)]"
+              style={{ width: Number.isFinite(carbIntensityScore) ? `${Math.max(2, carbIntensityScore)}%` : '2%' }}
+            />
+          </div>
+          <div className="mt-2 text-[11px] text-emerald-300/70">
+            Derived from normalized per-capita use and primary-energy productivity.
+          </div>
+        </div>
+
+        <div className="relative overflow-hidden p-4 rounded-2xl bg-white/[0.03] border border-white/5">
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-emerald-300/85">
+            <Leaf className="w-3 h-3" />
+            Relative Energy Use
+          </div>
+          <div className="h-1.5 rounded-full bg-emerald-950/70">
+            <div
+              className="h-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.5)]"
+              style={{ width: gaugeWidth }}
+            />
+          </div>
+          <div className="mt-2 text-[11px] text-emerald-300/70">
+            {Number.isFinite(normalizedEnergyUse)
+              ? `${Math.round(normalizedEnergyUse * 100)}th percentile of countries in current dataset slice`
+              : 'No normalized value available'}
+          </div>
+        </div>
       </div>
 
-      <button className="w-full mt-4 py-4 rounded-2xl bg-emerald-500 text-emerald-950 font-bold hover:bg-emerald-400 transition-all active:scale-[0.98] shadow-lg shadow-emerald-500/20">
-        Confirm Route
-      </button>
+      {!countryMetrics && (
+        <div className="p-4 rounded-2xl bg-emerald-900/20 border border-emerald-800/30 text-emerald-300/70 text-xs">
+          This country has no matching values in the ingested World Bank indicator rows.
+        </div>
+      )}
+
+      <div className="w-full mt-4 py-3 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-100 text-xs">
+        Source indicators: EG.USE.PCAP.KG.OE and EG.EGY.PRIM.PP.KD
+      </div>
     </div>
   );
 }
