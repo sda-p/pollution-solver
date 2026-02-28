@@ -17,20 +17,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-  graphhopper:
-    image: israelhikingmap/graphhopper:latest
-    container_name: pollution-solver-graphhopper
-    restart: unless-stopped
-    profiles: ["routing"]
-    ports:
-      - "8989:8989"
-    environment:
-      JAVA_OPTS: "-Xms1g -Xmx2g"
-      GRAPHHOPPER_OSM_FILE: ${GRAPHHOPPER_OSM_FILE:-/data/osm/monaco-latest.osm.pbf}
-    volumes:
-      - ./routing/osm:/data/osm
-      - ./routing/graph-cache:/data/graph-cache
-    command: ["-i", "${GRAPHHOPPER_OSM_FILE:-/data/osm/monaco-latest.osm.pbf}", "-o", "/data/graph-cache/default-gh", "--host", "0.0.0.0"]
 
 volumes:
   postgres_data:

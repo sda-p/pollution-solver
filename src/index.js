@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import { fetchOsmElements } from "./services/osmClient.js";
-import { resolveRoute } from "./services/graphhopperClient.js";
 import { fetchPollutionInsights } from "./services/pollutionInsights.service.js";
 import { fetchCarbonMonitorHeatmap } from "./services/carbonMonitor.service.js";
 
@@ -63,31 +62,6 @@ app.post("/osm/features", async (req, res) => {
       highway,
     });
     res.json({ count: elements.length, elements });
-  } catch (error) {
-    res.status(502).json({ error: error.message });
-  }
-});
-
-app.post("/routing/route", async (req, res) => {
-  try {
-    const { fromLat, fromLng, toLat, toLng, profile } = req.body || {};
-    const nums = [fromLat, fromLng, toLat, toLng].map(Number);
-    if (nums.some(Number.isNaN)) {
-      res.status(400).json({
-        error:
-          "Invalid coordinates. Provide numeric fromLat, fromLng, toLat, toLng.",
-      });
-      return;
-    }
-
-    const route = await resolveRoute({
-      fromLat: nums[0],
-      fromLng: nums[1],
-      toLat: nums[2],
-      toLng: nums[3],
-      profile,
-    });
-    res.json(route);
   } catch (error) {
     res.status(502).json({ error: error.message });
   }

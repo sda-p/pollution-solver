@@ -11,15 +11,3 @@ export async function fetchOsmFeatures(payload) {
   }
   return response.json();
 }
-
-export async function fetchRoute(payload) {
-  const response = await fetch(`${API_BASE_URL}/routing/route`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(`Route request failed (${response.status})`);
-  }
-  return response.json();
-}
