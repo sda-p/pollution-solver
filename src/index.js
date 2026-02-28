@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import { fetchOsmElements } from "./services/osmClient.js";
 import { resolveRoute } from "./services/graphhopperClient.js";
-import { pool } from "./db.js";
 
 const app = express();
 app.use(cors());
@@ -12,56 +11,14 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/insights", async (_req, res) => {
-  try {
-    const query = `
-WITH ranked AS (
-  SELECT lat,
-         lng,
-         monthly_emission,
-         max_daily_emission,
-         MAX(monthly_emission) OVER () AS max_monthly
-  FROM carbon_monitor_points
-  WHERE monthly_emission > 0
-  ORDER BY monthly_emission DESC
-  LIMIT 5000
-)
-SELECT lat,
-       lng,
-       monthly_emission,
-       max_daily_emission,
-       CASE
-         WHEN max_monthly IS NULL OR max_monthly = 0 THEN 0.05
-         ELSE GREATEST(0.02, LEAST(0.5, monthly_emission / max_monthly))
-       END AS size
-FROM ranked
-ORDER BY monthly_emission DESC;
-`;
-
-    const result = await pool.query(query);
-    const pollutionPoints = result.rows.map((row) => {
-      const size = Number(row.size);
-      let color = "#66bb6a";
-      if (size >= 0.33) color = "#ef5350";
-      else if (size >= 0.12) color = "#ffb74d";
-
-      return {
-        lat: Number(row.lat),
-        lng: Number(row.lng),
-        size,
-        color,
-        monthlyEmission: Number(row.monthly_emission),
-        maxDailyEmission: Number(row.max_daily_emission),
-      };
-    });
-
-    res.json({ pollutionPoints });
-  } catch (error) {
-    res.status(500).json({
-      error: "Failed to load pollution insights from database.",
-      details: error.message,
-    });
-  }
+// TODO: replace this with real pollution + OSM-derived insights.
+app.get("/insights", (_req, res) => {
+  const sampleData = [
+    { lat: 40.71, lng: -74.0, size: 0.8, color: "#ff0000", name: "New York" },
+    { lat: 51.51, lng: -0.13, size: 0.6, color: "#ff0000", name: "London" },
+    { lat: 35.68, lng: 139.77, size: 0.9, color: "#ff0000", name: "Tokyo" },
+  ];
+  res.json({ pollutionPoints: sampleData });
 });
 
 app.post("/osm/features", async (req, res) => {
