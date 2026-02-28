@@ -1,5 +1,9 @@
 node_modules
 dist
+datasets
+routing/osm/*.osm.pbf
+routing/graph-cache/*
+!routing/graph-cache/.gitkeep
 .env
 .DS_Store
 npm-debug.log*
