@@ -40,37 +40,6 @@ const angularDistanceDeg = (lat1, lng1, lat2, lng2) => {
   return (Math.acos(clamp(cosValue, -1, 1)) * 180) / Math.PI;
 };
 
-const pointInRing = (lng, lat, ring) => {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
-    const xi = Number(ring[i]?.[0]);
-    const yi = Number(ring[i]?.[1]);
-    const xj = Number(ring[j]?.[0]);
-    const yj = Number(ring[j]?.[1]);
-    const intersects =
-      yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi;
-    if (intersects) inside = !inside;
-  }
-  return inside;
-};
-
-const geometryContainsLngLat = (geometry, lng, lat) => {
-  if (!geometry) return false;
-  if (geometry.type === 'Polygon') {
-    const [outer = [], ...holes] = geometry.coordinates || [];
-    if (!pointInRing(lng, lat, outer)) return false;
-    return !holes.some(hole => pointInRing(lng, lat, hole));
-  }
-  if (geometry.type === 'MultiPolygon') {
-    return (geometry.coordinates || []).some(polygon => {
-      const [outer = [], ...holes] = polygon || [];
-      if (!pointInRing(lng, lat, outer)) return false;
-      return !holes.some(hole => pointInRing(lng, lat, hole));
-    });
-  }
-  return false;
-};
-
 const decodeRgbaTexture = image => {
   if (!image?.rgbaBase64 || !image?.width || !image?.height) return null;
   const raw = atob(image.rgbaBase64);
@@ -863,20 +832,6 @@ function App() {
     return `hsla(${hue}, 88%, 58%, 0.74)`;
   };
 
-  const openCountryFromCoords = (coords, event) => {
-    event?.preventDefault?.();
-    const lat = Number(coords?.lat);
-    const lng = Number(coords?.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-
-    const matched = countries.find(feature =>
-      geometryContainsLngLat(feature?.geometry, lng, lat)
-    );
-    if (matched?.properties?.NAME) {
-      setSelectedCountry(matched.properties.NAME);
-    }
-  };
-
   return (
     <div className="h-screen bg-emerald-950 text-white flex flex-col overflow-hidden font-sans">
       <div className="fixed top-0 left-0 right-0 z-50 navbar bg-emerald-950/80 backdrop-blur-3xl border-b border-emerald-400/30 px-8 py-6">
@@ -983,9 +938,6 @@ function App() {
             scheduleOsmOverlayUpdate(pov);
           }}
           onGlobeClick={() => {}}
-          onGlobeRightClick={(coords, event) => {
-            openCountryFromCoords(coords, event);
-          }}
           pointerEventsFilter={(obj, data) => {
             void obj;
             if (data?.layerType === 'osm-tile') return true;
@@ -1020,7 +972,7 @@ function App() {
           }
           polygonAltitude={polygonAltitudeFromCamera(cameraAltitude)}
           polygonLabel={d => `<b>${d.properties.NAME}</b>`}
-          onPolygonClick={() => {}}
+          onPolygonClick={d => setSelectedCountry(d.properties.NAME)}
           onPolygonHover={polygon => {
             void polygon;
           }}
