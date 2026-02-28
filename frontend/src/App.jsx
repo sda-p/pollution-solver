@@ -71,9 +71,9 @@ function App() {
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
       {/* Nice Header */}
-      {/* === TOP HEADER WITH BUTTONS === */}
-{/* === GLASS HEADER - blur transparency + 20% bigger === */}
-<div className="navbar bg-white/10 backdrop-blur-3xl border-b border-green-500/30 px-8 py-6 z-50">
+      {/* === TOP  WITH BUTTONS === */}
+{/* === REAL GLASS HEADER - globe clearly shows through === */}
+<div className="fixed top-0 left-0 right-0 z-50 navbar bg-black/10 backdrop-blur-3xl border-b border-white/10 px-8 py-6">
   <div className="navbar-start">
     <div className="flex items-center gap-4">
       <span className="text-4xl">🌍</span>
@@ -98,13 +98,13 @@ function App() {
 </div>
 
       {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden pt-24">
         {/* Globe */}
         <div className="flex-1 relative">
           <Globe
             globeImageUrl="//unpkg.com/three-globe/example/img/earth-day.jpg"
             bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
-            backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
+            backgroundImageUrl="/background-grid-10.png"
             showAtmosphere={true}
             atmosphereColor="#a0d8ff"
             atmosphereAltitude={0.25}
