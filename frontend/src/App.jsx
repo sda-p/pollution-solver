@@ -1265,7 +1265,7 @@ function App() {
         <div className="navbar-start flex items-center gap-4">
           <span className="text-4xl">🌍</span>
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-emerald-50">Pollution Solver</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-emerald-50">Green Routes</h1>
             <p className="text-xs text-emerald-400/90 -mt-1 uppercase tracking-widest">see • choose • improve</p>
           </div>
         </div>
