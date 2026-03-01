@@ -1,9 +1,13 @@
+import { useEffect, useRef, useState } from 'react';
+import { searchOsmAddress } from '../../../services/mobilityApi';
+
 function JourneyPlannerSidebar({
   isOpen,
   setIsOpen,
   routeState,
   journeyLookup,
   setRouteState,
+  setRouteEndpoint,
   clearRouteSelection
 }) {
   const hasJourney = Boolean(routeState.from && routeState.to);
@@ -11,27 +15,108 @@ function JourneyPlannerSidebar({
     point ? `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}` : '';
 
   const modeCards = [
-    {
-      id: 'walking',
-      title: 'Walking',
-      color: 'text-emerald-300'
-    },
-    {
-      id: 'cycling',
-      title: 'Cycling',
-      color: 'text-cyan-300'
-    },
-    {
-      id: 'driving',
-      title: 'Driving',
-      color: 'text-amber-300'
-    }
+    { id: 'walking', title: 'Walking', color: 'text-emerald-300' },
+    { id: 'cycling', title: 'Cycling', color: 'text-cyan-300' },
+    { id: 'driving', title: 'Driving', color: 'text-amber-300' }
   ];
 
   const fromLookup = journeyLookup?.from || {};
   const toLookup = journeyLookup?.to || {};
   const startValue = fromLookup.addressLine || formatPoint(routeState.from);
   const destinationValue = toLookup.addressLine || formatPoint(routeState.to);
+
+  const [startInput, setStartInput] = useState('');
+  const [destinationInput, setDestinationInput] = useState('');
+  const [startOptions, setStartOptions] = useState([]);
+  const [destinationOptions, setDestinationOptions] = useState([]);
+  const [startLoading, setStartLoading] = useState(false);
+  const [destinationLoading, setDestinationLoading] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
+  const [destinationOpen, setDestinationOpen] = useState(false);
+  const startTokenRef = useRef(0);
+  const destinationTokenRef = useRef(0);
+
+  useEffect(() => {
+    const q = startInput.trim();
+    if (q.length < 3) {
+      setStartOptions([]);
+      setStartLoading(false);
+      return;
+    }
+
+    const token = startTokenRef.current + 1;
+    startTokenRef.current = token;
+    const timer = setTimeout(async () => {
+      try {
+        setStartLoading(true);
+        const payload = await searchOsmAddress({
+          q,
+          limit: 6,
+          aroundLat: routeState.from?.lat,
+          aroundLng: routeState.from?.lng
+        });
+        if (token !== startTokenRef.current) return;
+        setStartOptions(Array.isArray(payload?.results) ? payload.results : []);
+      } catch (error) {
+        if (token !== startTokenRef.current) return;
+        setStartOptions([]);
+      } finally {
+        if (token === startTokenRef.current) setStartLoading(false);
+      }
+    }, 220);
+
+    return () => clearTimeout(timer);
+  }, [startInput, routeState.from?.lat, routeState.from?.lng]);
+
+  useEffect(() => {
+    const q = destinationInput.trim();
+    if (q.length < 3) {
+      setDestinationOptions([]);
+      setDestinationLoading(false);
+      return;
+    }
+
+    const token = destinationTokenRef.current + 1;
+    destinationTokenRef.current = token;
+    const timer = setTimeout(async () => {
+      try {
+        setDestinationLoading(true);
+        const payload = await searchOsmAddress({
+          q,
+          limit: 6,
+          aroundLat: routeState.to?.lat,
+          aroundLng: routeState.to?.lng
+        });
+        if (token !== destinationTokenRef.current) return;
+        setDestinationOptions(Array.isArray(payload?.results) ? payload.results : []);
+      } catch (error) {
+        if (token !== destinationTokenRef.current) return;
+        setDestinationOptions([]);
+      } finally {
+        if (token === destinationTokenRef.current) setDestinationLoading(false);
+      }
+    }, 220);
+
+    return () => clearTimeout(timer);
+  }, [destinationInput, routeState.to?.lat, routeState.to?.lng]);
+
+  const applyStartSelection = option => {
+    const lat = Number(option?.lat);
+    const lng = Number(option?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setStartInput(option?.displayName || '');
+    setStartOpen(false);
+    void setRouteEndpoint('from', { lat, lng });
+  };
+
+  const applyDestinationSelection = option => {
+    const lat = Number(option?.lat);
+    const lng = Number(option?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setDestinationInput(option?.displayName || '');
+    setDestinationOpen(false);
+    void setRouteEndpoint('to', { lat, lng });
+  };
 
   return (
     <>
@@ -61,7 +146,7 @@ function JourneyPlannerSidebar({
           <div className="animate-in fade-in slide-in-from-right-4 duration-500">
             <h2 className="mb-1 text-4xl font-bold text-emerald-50">Journey Planner</h2>
             <p className="mb-6 text-sm font-medium text-emerald-400/80">
-              Set start and destination by clicking on the globe.
+              Set start and destination by typing or clicking on the globe.
             </p>
 
             <div className="mb-6 space-y-4">
@@ -71,11 +156,39 @@ function JourneyPlannerSidebar({
                 </div>
                 <input
                   type="text"
-                  value={startValue}
-                  readOnly
-                  placeholder="Click map to set start"
+                  value={startInput}
+                  onChange={event => {
+                    setStartInput(event.target.value);
+                    setStartOpen(true);
+                  }}
+                  onFocus={() => setStartOpen(true)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      applyStartSelection(startOptions[0]);
+                    }
+                  }}
+                  placeholder={startValue || 'Type start location'}
                   className="w-full rounded-lg border border-emerald-700/60 bg-emerald-950/70 px-3 py-2 text-sm text-emerald-50 outline-none placeholder:text-emerald-300/60"
                 />
+                {startOpen && (startOptions.length > 0 || startLoading) ? (
+                  <div className="mt-2 max-h-32 overflow-y-auto rounded-lg border border-emerald-700/50 bg-emerald-950/85">
+                    {startLoading ? (
+                      <div className="px-3 py-2 text-xs text-emerald-200/80">Searching...</div>
+                    ) : (
+                      startOptions.map((item, idx) => (
+                        <button
+                          key={`${item.osmType || 'osm'}:${item.osmId || idx}:from:${idx}`}
+                          onMouseDown={event => event.preventDefault()}
+                          onClick={() => applyStartSelection(item)}
+                          className="block w-full border-b border-emerald-800/40 px-3 py-2 text-left text-xs text-emerald-100 hover:bg-emerald-900/50 last:border-b-0"
+                        >
+                          <div className="truncate">{item.displayName}</div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
                 <div className="mt-2 truncate text-[11px] text-emerald-200/80">
                   {fromLookup.loading
                     ? 'Resolving nearest address...'
@@ -89,11 +202,39 @@ function JourneyPlannerSidebar({
                 </div>
                 <input
                   type="text"
-                  value={destinationValue}
-                  readOnly
-                  placeholder="Click map to set destination"
+                  value={destinationInput}
+                  onChange={event => {
+                    setDestinationInput(event.target.value);
+                    setDestinationOpen(true);
+                  }}
+                  onFocus={() => setDestinationOpen(true)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      applyDestinationSelection(destinationOptions[0]);
+                    }
+                  }}
+                  placeholder={destinationValue || 'Type destination location'}
                   className="w-full rounded-lg border border-emerald-700/60 bg-emerald-950/70 px-3 py-2 text-sm text-emerald-50 outline-none placeholder:text-emerald-300/60"
                 />
+                {destinationOpen && (destinationOptions.length > 0 || destinationLoading) ? (
+                  <div className="mt-2 max-h-32 overflow-y-auto rounded-lg border border-emerald-700/50 bg-emerald-950/85">
+                    {destinationLoading ? (
+                      <div className="px-3 py-2 text-xs text-emerald-200/80">Searching...</div>
+                    ) : (
+                      destinationOptions.map((item, idx) => (
+                        <button
+                          key={`${item.osmType || 'osm'}:${item.osmId || idx}:to:${idx}`}
+                          onMouseDown={event => event.preventDefault()}
+                          onClick={() => applyDestinationSelection(item)}
+                          className="block w-full border-b border-emerald-800/40 px-3 py-2 text-left text-xs text-emerald-100 hover:bg-emerald-900/50 last:border-b-0"
+                        >
+                          <div className="truncate">{item.displayName}</div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
                 <div className="mt-2 truncate text-[11px] text-emerald-200/80">
                   {toLookup.loading
                     ? 'Resolving nearest address...'
@@ -103,7 +244,11 @@ function JourneyPlannerSidebar({
 
               <div className="flex gap-2">
                 <button
-                  onClick={clearRouteSelection}
+                  onClick={() => {
+                    setStartInput('');
+                    setDestinationInput('');
+                    clearRouteSelection();
+                  }}
                   className="rounded-lg border border-amber-200/40 px-3 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-800/25"
                 >
                   Reset Journey

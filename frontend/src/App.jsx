@@ -732,6 +732,76 @@ function App() {
     }));
   };
 
+  const setRouteEndpoint = async (endpoint, coords) => {
+    const lat = Number(coords?.lat);
+    const lng = Number(coords?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const nextPoint = { lat, lng };
+    const from = endpoint === 'from' ? nextPoint : routeState.from;
+    const to = endpoint === 'to' ? nextPoint : routeState.to;
+
+    if (!from || !to) {
+      setRouteState(prev => ({
+        ...prev,
+        from: endpoint === 'from' ? nextPoint : prev.from,
+        to: endpoint === 'to' ? nextPoint : prev.to,
+        loading: false,
+        error: '',
+        distanceKm: null,
+        durationMin: null,
+        awaiting: from ? 'from' : 'to',
+        geojson: null
+      }));
+      return;
+    }
+
+    setRouteState(prev => ({
+      ...prev,
+      from,
+      to,
+      loading: true,
+      error: '',
+      geojson: null
+    }));
+
+    try {
+      const payload = await fetchRoute({
+        fromLat: from.lat,
+        fromLng: from.lng,
+        toLat: to.lat,
+        toLng: to.lng,
+        profile: routeState.profile
+      });
+      const route = payload?.routes?.[0];
+      const distanceKm = Number(route?.distance) / 1000;
+      const durationMin = Number(route?.duration) / 60;
+      setRouteState(prev => ({
+        ...prev,
+        from,
+        to,
+        loading: false,
+        error: '',
+        distanceKm: Number.isFinite(distanceKm) ? distanceKm : null,
+        durationMin: Number.isFinite(durationMin) ? durationMin : null,
+        awaiting: 'from',
+        geojson: route?.geometry || null
+      }));
+    } catch (error) {
+      setRouteState(prev => ({
+        ...prev,
+        from,
+        to,
+        loading: false,
+        error: error?.message || 'route lookup failed',
+        distanceKm: null,
+        durationMin: null,
+        awaiting: 'from',
+        geojson: null
+      }));
+    }
+  };
+
   const pickRoutePoint = async coords => {
     const lat = Number(coords?.lat);
     const lng = Number(coords?.lng);
@@ -802,10 +872,28 @@ function App() {
     const clampedOpacity = clamp(zoomOpacity, 0, 1);
     const data = countryData[countryName];
     if (!data) return `rgba(100,100,100,${(0.25 * clampedOpacity).toFixed(3)})`;
-    const score = Math.min(data.energyUsePerCapitaKgOe || 0, 15000) / 150;
-    const hue = 120 - score * 1.2;
+    const combinedMetric =
+      Number(data.co2PerUnitEnergyKgPerKwh) * Number(data.energyUsePerCapitaKgOe);
+    const values = countryColorMetricRange;
+    if (!Number.isFinite(combinedMetric) || !Number.isFinite(values?.min) || !Number.isFinite(values?.max)) {
+      return `rgba(100,100,100,${(0.25 * clampedOpacity).toFixed(3)})`;
+    }
+    const span = Math.max(1e-9, values.max - values.min);
+    const normalized = clamp((combinedMetric - values.min) / span, 0, 1);
+    const hue = 120 - normalized * 120;
     return `hsla(${hue}, 88%, 58%, ${(0.74 * clampedOpacity).toFixed(3)})`;
   };
+
+  const countryColorMetricRange = useMemo(() => {
+    const values = Object.values(countryData)
+      .map(row => Number(row.co2PerUnitEnergyKgPerKwh) * Number(row.energyUsePerCapitaKgOe))
+      .filter(Number.isFinite);
+    if (!values.length) return null;
+    return {
+      min: Math.min(...values),
+      max: Math.max(...values)
+    };
+  }, [countryData]);
 
   const showCountryPolygons = cameraAltitude >= COUNTRY_POLYGON_TOGGLE_ALTITUDE;
 
@@ -1022,6 +1110,7 @@ function App() {
         routeState={routeState}
         journeyLookup={journeyLookup}
         setRouteState={setRouteState}
+        setRouteEndpoint={setRouteEndpoint}
         clearRouteSelection={clearRouteSelection}
       />
     </div>

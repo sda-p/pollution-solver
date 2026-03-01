@@ -14,7 +14,8 @@ const pool = new Pool({
 
 const DEFAULT_INDICATOR = "EG.USE.PCAP.KG.OE";
 const SECONDARY_INDICATOR = "EG.EGY.PRIM.PP.KD";
-const SUPPORTED_INDICATORS = [DEFAULT_INDICATOR, SECONDARY_INDICATOR];
+const TERTIARY_INDICATOR = "OWID_CB_CO2_PER_UNIT_ENERGY";
+const SUPPORTED_INDICATORS = [DEFAULT_INDICATOR, SECONDARY_INDICATOR, TERTIARY_INDICATOR];
 
 export async function fetchPollutionInsights({ limit = 220 } = {}) {
   const safeLimit = Number.isFinite(limit)
@@ -92,6 +93,11 @@ ORDER BY wb.country_name, wb.indicator_code
       countryData[countryName].primaryEnergyYear = row.year;
       countryData[countryName].primaryEnergyIndicatorCode = row.indicator_code;
       countryData[countryName].primaryEnergyIndicatorName = row.indicator_name;
+    } else if (row.indicator_code === TERTIARY_INDICATOR) {
+      countryData[countryName].co2PerUnitEnergyKgPerKwh = value;
+      countryData[countryName].co2PerUnitEnergyYear = row.year;
+      countryData[countryName].co2PerUnitEnergyIndicatorCode = row.indicator_code;
+      countryData[countryName].co2PerUnitEnergyIndicatorName = row.indicator_name;
     }
   });
 
@@ -101,12 +107,17 @@ ORDER BY wb.country_name, wb.indicator_code
   const productivityValues = Object.values(countryData)
     .map((row) => row.primaryEnergyPerPppKd)
     .filter(Number.isFinite);
+  const carbonPerEnergyValues = Object.values(countryData)
+    .map((row) => row.co2PerUnitEnergyKgPerKwh)
+    .filter(Number.isFinite);
   const maxEnergyUse = energyUseValues.length ? Math.max(...energyUseValues) : null;
   const maxProductivity = productivityValues.length ? Math.max(...productivityValues) : null;
+  const maxCo2PerUnitEnergy = carbonPerEnergyValues.length ? Math.max(...carbonPerEnergyValues) : null;
 
   Object.values(countryData).forEach((row) => {
     const energyUse = row.energyUsePerCapitaKgOe;
     const productivity = row.primaryEnergyPerPppKd;
+    const co2PerUnitEnergy = row.co2PerUnitEnergyKgPerKwh;
     const normalizedEnergyUse =
       Number.isFinite(energyUse) && Number.isFinite(maxEnergyUse) && maxEnergyUse > 0
         ? energyUse / maxEnergyUse
@@ -115,12 +126,23 @@ ORDER BY wb.country_name, wb.indicator_code
       Number.isFinite(productivity) && Number.isFinite(maxProductivity) && maxProductivity > 0
         ? productivity / maxProductivity
         : null;
+    const normalizedCo2PerUnitEnergy =
+      Number.isFinite(co2PerUnitEnergy) &&
+      Number.isFinite(maxCo2PerUnitEnergy) &&
+      maxCo2PerUnitEnergy > 0
+        ? co2PerUnitEnergy / maxCo2PerUnitEnergy
+        : null;
 
     row.normalizedEnergyUse = normalizedEnergyUse;
     row.normalizedPrimaryEnergy = normalizedProductivity;
+    row.normalizedCo2PerUnitEnergy = normalizedCo2PerUnitEnergy;
     row.carbIntensityScore =
       Number.isFinite(normalizedEnergyUse) && Number.isFinite(normalizedProductivity)
         ? Math.round((normalizedEnergyUse * (1 - normalizedProductivity)) * 100)
+        : null;
+    row.energyAdjustedCo2Score =
+      Number.isFinite(normalizedEnergyUse) && Number.isFinite(normalizedCo2PerUnitEnergy)
+        ? Math.round(((0.45 * normalizedEnergyUse) + (0.55 * normalizedCo2PerUnitEnergy)) * 100)
         : null;
   });
 
@@ -130,6 +152,7 @@ ORDER BY wb.country_name, wb.indicator_code
     meta: {
       indicatorCode: DEFAULT_INDICATOR,
       secondaryIndicatorCode: SECONDARY_INDICATOR,
+      tertiaryIndicatorCode: TERTIARY_INDICATOR,
       pointCount: pollutionPoints.length,
     },
   };

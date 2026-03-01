@@ -118,6 +118,12 @@ Ingestion is idempotent. It creates/refreshes:
 - `world_bank_indicator_values`
 - `carbon_monitor_variables`
 
+Datasets currently ingested into `world_bank_indicator_values`:
+
+- `API_EG.USE.PCAP.KG.OE_DS2_en_xml_v2_3115.xml` (`EG.USE.PCAP.KG.OE`)
+- `API_EG.EGY.PRIM.PP.KD_DS2_en_xml_v2_21105.xml` (`EG.EGY.PRIM.PP.KD`)
+- `OWID_CB_CO2_PER_UNIT_ENERGY.csv` (`OWID_CB_CO2_PER_UNIT_ENERGY`)
+
 ## Run the app
 
 Run backend + frontend together:

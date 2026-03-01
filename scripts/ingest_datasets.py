@@ -22,6 +22,7 @@ XML_FILES = [
     "API_EG.EGY.PRIM.PP.KD_DS2_en_xml_v2_21105.xml",
     "API_EG.USE.PCAP.KG.OE_DS2_en_xml_v2_3115.xml",
 ]
+OWID_FILE = "OWID_CB_CO2_PER_UNIT_ENERGY.csv"
 
 
 def sh(cmd, env=None, check=True, capture_output=False):
@@ -135,6 +136,52 @@ def parse_xml_to_csv(xml_path, writer):
     return rows, non_null_values
 
 
+def parse_owid_csv_to_csv(csv_input_path, writer):
+    rows = 0
+    non_null_values = 0
+
+    with csv_input_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            country_code = (row.get("REF_AREA") or "").strip()
+            country_name = (row.get("REF_AREA_LABEL") or "").strip()
+            indicator_code = (row.get("INDICATOR") or "").strip()
+            indicator_name = (row.get("INDICATOR_LABEL") or "").strip()
+            year_raw = (row.get("TIME_PERIOD") or "").strip()
+            value_raw = (row.get("OBS_VALUE") or "").strip()
+
+            if not country_code or not country_name or not indicator_code or not year_raw:
+                continue
+
+            try:
+                year = int(year_raw)
+            except ValueError:
+                continue
+
+            value = None
+            if value_raw != "":
+                try:
+                    value = float(value_raw)
+                    non_null_values += 1
+                except ValueError:
+                    value = None
+
+            writer.writerow(
+                [
+                    csv_input_path.name,
+                    country_code,
+                    country_name,
+                    indicator_code,
+                    indicator_name,
+                    year,
+                    value,
+                ]
+            )
+            rows += 1
+
+    return rows, non_null_values
+
+
 def sha256_of_file(path):
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -154,6 +201,9 @@ def build_world_bank_csv():
             xml_path = DATASETS_DIR / filename
             rows, non_null_values = parse_xml_to_csv(xml_path, writer)
             totals[filename] = {"rows": rows, "non_null_values": non_null_values}
+        owid_path = DATASETS_DIR / OWID_FILE
+        rows, non_null_values = parse_owid_csv_to_csv(owid_path, writer)
+        totals[OWID_FILE] = {"rows": rows, "non_null_values": non_null_values}
     return Path(csv_path), totals
 
 
@@ -204,6 +254,7 @@ TRUNCATE TABLE carbon_monitor_variables, world_bank_indicator_values, dataset_fi
     gz_path = DATASETS_DIR / "carbon-monitor-graced.gz"
     xml1 = DATASETS_DIR / XML_FILES[0]
     xml2 = DATASETS_DIR / XML_FILES[1]
+    owid = DATASETS_DIR / OWID_FILE
 
     nc_sha = sha256_of_file(nc_path)
     gz_member_name = None
@@ -223,6 +274,7 @@ INSERT INTO dataset_files (file_name, format, size_bytes, sha256, container_type
 VALUES
   ('{XML_FILES[0]}', 'XML', {xml1.stat().st_size}, NULL, NULL, NULL, {totals[XML_FILES[0]]['rows']}, 'World Bank indicator EG.EGY.PRIM.PP.KD'),
   ('{XML_FILES[1]}', 'XML', {xml2.stat().st_size}, NULL, NULL, NULL, {totals[XML_FILES[1]]['rows']}, 'World Bank indicator EG.USE.PCAP.KG.OE'),
+  ('{OWID_FILE}', 'CSV', {owid.stat().st_size}, NULL, NULL, NULL, {totals[OWID_FILE]['rows']}, 'OWID carbon intensity indicator OWID_CB_CO2_PER_UNIT_ENERGY'),
   ('CarbonMonitor_total_y2024_m12.nc', 'NetCDF4/HDF5', {nc_path.stat().st_size}, '{nc_sha}', NULL, NULL, NULL, 'Carbon Monitor gridded CO2 emissions'){gz_insert}
 ;
 
@@ -273,6 +325,17 @@ LIMIT 10;
 """,
         ),
         (
+            "latest CO2 per unit energy values",
+            """
+SELECT country_code, country_name, year, ROUND(value::numeric, 5) AS value
+FROM world_bank_indicator_values
+WHERE indicator_code = 'OWID_CB_CO2_PER_UNIT_ENERGY'
+  AND value IS NOT NULL
+ORDER BY year DESC, value DESC
+LIMIT 10;
+""",
+        ),
+        (
             "carbon monitor metadata",
             """
 SELECT df.file_name, df.format, df.size_bytes, df.sha256, array_agg(v.variable_name ORDER BY v.variable_name) AS variables
@@ -298,7 +361,7 @@ def main():
     ensure_required_binaries()
     env = get_pg_env()
     ensure_server_up(env)
-    ensure_role_and_database(env)
+    #ensure_role_and_database(env)
     totals = ingest(env)
     outputs = run_test_queries(env)
 
