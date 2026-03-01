@@ -53,6 +53,7 @@ function App() {
   const [countriesByIso3, setCountriesByIso3] = useState(new Map());
   const [showCountryFill, setShowCountryFill] = useState(true);
   const [showCarbonOverlay, setShowCarbonOverlay] = useState(true);
+  const [showDebugGui, setShowDebugGui] = useState(true);
 
   const [osmDebug, setOsmDebug] = useState({
     altitude: 2.5,
@@ -155,6 +156,26 @@ function App() {
       .then(res => res.json())
       .then(data => setCarbonBitmap(data.image || null))
       .catch(() => setCarbonBitmap(null));
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = event => {
+      const target = event.target;
+      const tagName = target?.tagName?.toLowerCase?.();
+      const isTypingTarget =
+        target?.isContentEditable ||
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        tagName === 'select';
+      if (isTypingTarget) return;
+
+      if (event.key === 'b' || event.key === 'B') {
+        setShowDebugGui(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -867,24 +888,28 @@ function App() {
           }}
         />
 
-        <GlobeInfoPanel />
-        <LayerTogglesPanel
-          showCountryFill={showCountryFill}
-          showCarbonOverlay={showCarbonOverlay}
-          onToggleCountryFill={() => setShowCountryFill(prev => !prev)}
-          onToggleCarbonOverlay={() => setShowCarbonOverlay(prev => !prev)}
-        />
-        <OsmDebugPanel osmDebug={osmDebug} />
-        <AddressSearchPanel
-          addressSearch={addressSearch}
-          setAddressSearch={setAddressSearch}
-          goToSearchSelection={goToSearchSelection}
-        />
-        <NearestRoadPanel osmLookup={osmLookup} />
-        <RouteTracePanel
-          routeState={routeState}
-          clearRouteSelection={clearRouteSelection}
-        />
+        {showDebugGui ? (
+          <>
+            <GlobeInfoPanel />
+            <LayerTogglesPanel
+              showCountryFill={showCountryFill}
+              showCarbonOverlay={showCarbonOverlay}
+              onToggleCountryFill={() => setShowCountryFill(prev => !prev)}
+              onToggleCarbonOverlay={() => setShowCarbonOverlay(prev => !prev)}
+            />
+            <OsmDebugPanel osmDebug={osmDebug} />
+            <AddressSearchPanel
+              addressSearch={addressSearch}
+              setAddressSearch={setAddressSearch}
+              goToSearchSelection={goToSearchSelection}
+            />
+            <NearestRoadPanel osmLookup={osmLookup} />
+            <RouteTracePanel
+              routeState={routeState}
+              clearRouteSelection={clearRouteSelection}
+            />
+          </>
+        ) : null}
       </div>
       <CountrySidebar
         selectedCountry={selectedCountry}
