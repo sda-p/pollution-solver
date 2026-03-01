@@ -412,6 +412,29 @@ function App() {
     ];
   }, [routeState.geojson]);
 
+  const routePinData = useMemo(
+    () =>
+      [
+        routeState.from
+          ? {
+              id: `route-from:${routeState.from.lat.toFixed(5)}:${routeState.from.lng.toFixed(5)}`,
+              lat: routeState.from.lat,
+              lng: routeState.from.lng,
+              color: '#f59e0b'
+            }
+          : null,
+        routeState.to
+          ? {
+              id: `route-to:${routeState.to.lat.toFixed(5)}:${routeState.to.lng.toFixed(5)}`,
+              lat: routeState.to.lat,
+              lng: routeState.to.lng,
+              color: '#ef4444'
+            }
+          : null
+      ].filter(Boolean),
+    [routeState.from, routeState.to]
+  );
+
   useEffect(() => {
     const from = routeState.from;
     const to = routeState.to;
@@ -1055,27 +1078,7 @@ function App() {
           }
           labelsData={[
             clickMarker,
-            selectedAddressMarker,
-            routeState.from
-              ? {
-                  id: `route-from:${routeState.from.lat.toFixed(5)}:${routeState.from.lng.toFixed(5)}`,
-                  lat: routeState.from.lat,
-                  lng: routeState.from.lng,
-                  color: '#f59e0b',
-                  dotRadius: 0.00055,
-                  altitude: 0.0003001
-                }
-              : null,
-            routeState.to
-              ? {
-                  id: `route-to:${routeState.to.lat.toFixed(5)}:${routeState.to.lng.toFixed(5)}`,
-                  lat: routeState.to.lat,
-                  lng: routeState.to.lng,
-                  color: '#ef4444',
-                  dotRadius: 0.00055,
-                  altitude: 0.0003001
-                }
-              : null
+            selectedAddressMarker
           ].filter(Boolean)}
           labelLat={d => d.lat}
           labelLng={d => d.lng}
@@ -1084,6 +1087,35 @@ function App() {
           labelSize={0.0001}
           labelDotRadius={d => d.dotRadius || 0.0001}
           labelAltitude={d => d.altitude || 0.0003001}
+          htmlElementsData={routePinData}
+          htmlLat={d => d.lat}
+          htmlLng={d => d.lng}
+          htmlAltitude={() => 0.0003002}
+          htmlElement={d => {
+            const pin = document.createElement('div');
+            pin.style.position = 'relative';
+            pin.style.width = '18px';
+            pin.style.height = '18px';
+            pin.style.background = d.color;
+            pin.style.border = '1px solid rgba(255,255,255,0.85)';
+            pin.style.borderRadius = '50% 50% 50% 0';
+            pin.style.transform = 'translate(-50%, -100%) rotate(-45deg)';
+            pin.style.boxShadow = '0 2px 6px rgba(0,0,0,0.45)';
+            pin.style.pointerEvents = 'none';
+
+            const dot = document.createElement('div');
+            dot.style.position = 'absolute';
+            dot.style.left = '50%';
+            dot.style.top = '50%';
+            dot.style.width = '6px';
+            dot.style.height = '6px';
+            dot.style.borderRadius = '50%';
+            dot.style.background = 'rgba(255,255,255,0.95)';
+            dot.style.transform = 'translate(-50%, -50%) rotate(45deg)';
+            pin.appendChild(dot);
+
+            return pin;
+          }}
           pathsData={routePathData}
           pathPoints={path => path.points}
           pathPointLat={point => point.lat}
