@@ -32,7 +32,7 @@ import GlobeInfoPanel from './features/globe/components/GlobeInfoPanel';
 import LayerTogglesPanel from './features/globe/components/LayerTogglesPanel';
 import NearestRoadPanel from './features/globe/components/NearestRoadPanel';
 import OsmDebugPanel from './features/globe/components/OsmDebugPanel';
-import RouteTracePanel from './features/globe/components/RouteTracePanel';
+import JourneyPlannerSidebar from './features/globe/components/JourneyPlannerSidebar';
 
 function App() {
   const globeRef = useRef();
@@ -42,6 +42,7 @@ function App() {
   const osmUpdateTimerRef = useRef(null);
   const osmRequestTokenRef = useRef(0);
   const searchTokenRef = useRef(0);
+  const journeyLookupTokenRef = useRef({ from: 0, to: 0 });
 
   const [insights, setInsights] = useState([]);
   const [carbonBitmap, setCarbonBitmap] = useState(null);
@@ -54,6 +55,7 @@ function App() {
   const [showCountryFill, setShowCountryFill] = useState(true);
   const [showCarbonOverlay, setShowCarbonOverlay] = useState(true);
   const [showDebugGui, setShowDebugGui] = useState(true);
+  const [showJourneyPlanner, setShowJourneyPlanner] = useState(true);
 
   const [osmDebug, setOsmDebug] = useState({
     altitude: 2.5,
@@ -104,6 +106,20 @@ function App() {
     profile: 'driving',
     awaiting: 'from',
     geojson: null
+  });
+  const [journeyLookup, setJourneyLookup] = useState({
+    from: {
+      loading: false,
+      addressLine: '',
+      displayName: '',
+      error: ''
+    },
+    to: {
+      loading: false,
+      addressLine: '',
+      displayName: '',
+      error: ''
+    }
   });
 
   const updateCameraAltitudeFromPov = pov => {
@@ -203,6 +219,94 @@ function App() {
         setCountriesByIso3(new Map());
       });
   }, []);
+
+  useEffect(() => {
+    const point = routeState.from;
+    if (!point) {
+      setJourneyLookup(prev => ({
+        ...prev,
+        from: { loading: false, addressLine: '', displayName: '', error: '' }
+      }));
+      return;
+    }
+
+    const token = journeyLookupTokenRef.current.from + 1;
+    journeyLookupTokenRef.current.from = token;
+    setJourneyLookup(prev => ({
+      ...prev,
+      from: { ...prev.from, loading: true, error: '' }
+    }));
+
+    fetchOsmReverse({ lat: point.lat, lng: point.lng })
+      .then(data => {
+        if (token !== journeyLookupTokenRef.current.from) return;
+        setJourneyLookup(prev => ({
+          ...prev,
+          from: {
+            loading: false,
+            addressLine: data?.addressLine || data?.road || '',
+            displayName: data?.displayName || '',
+            error: ''
+          }
+        }));
+      })
+      .catch(error => {
+        if (token !== journeyLookupTokenRef.current.from) return;
+        setJourneyLookup(prev => ({
+          ...prev,
+          from: {
+            loading: false,
+            addressLine: '',
+            displayName: '',
+            error: error?.message || 'reverse geocoding failed'
+          }
+        }));
+      });
+  }, [routeState.from]);
+
+  useEffect(() => {
+    const point = routeState.to;
+    if (!point) {
+      setJourneyLookup(prev => ({
+        ...prev,
+        to: { loading: false, addressLine: '', displayName: '', error: '' }
+      }));
+      return;
+    }
+
+    const token = journeyLookupTokenRef.current.to + 1;
+    journeyLookupTokenRef.current.to = token;
+    setJourneyLookup(prev => ({
+      ...prev,
+      to: { ...prev.to, loading: true, error: '' }
+    }));
+
+    fetchOsmReverse({ lat: point.lat, lng: point.lng })
+      .then(data => {
+        if (token !== journeyLookupTokenRef.current.to) return;
+        setJourneyLookup(prev => ({
+          ...prev,
+          to: {
+            loading: false,
+            addressLine: data?.addressLine || data?.road || '',
+            displayName: data?.displayName || '',
+            error: ''
+          }
+        }));
+      })
+      .catch(error => {
+        if (token !== journeyLookupTokenRef.current.to) return;
+        setJourneyLookup(prev => ({
+          ...prev,
+          to: {
+            loading: false,
+            addressLine: '',
+            displayName: '',
+            error: error?.message || 'reverse geocoding failed'
+          }
+        }));
+      });
+  }, [routeState.to]);
 
   const pointsData = useMemo(() => {
     if (!insights.length || !countriesByIso3.size) return [];
@@ -904,10 +1008,6 @@ function App() {
               goToSearchSelection={goToSearchSelection}
             />
             <NearestRoadPanel osmLookup={osmLookup} />
-            <RouteTracePanel
-              routeState={routeState}
-              clearRouteSelection={clearRouteSelection}
-            />
           </>
         ) : null}
       </div>
@@ -915,6 +1015,14 @@ function App() {
         selectedCountry={selectedCountry}
         setSelectedCountry={setSelectedCountry}
         countryData={countryData}
+      />
+      <JourneyPlannerSidebar
+        isOpen={showJourneyPlanner}
+        setIsOpen={setShowJourneyPlanner}
+        routeState={routeState}
+        journeyLookup={journeyLookup}
+        setRouteState={setRouteState}
+        clearRouteSelection={clearRouteSelection}
       />
     </div>
   );
