@@ -82,6 +82,51 @@ const JOURNEY_ACHIEVEMENT_DEFS = [
     target: 10
   }
 ];
+const DEFAULT_STATS = {
+  routesFound: 0,
+  addressesSearched: 0,
+  countriesExplored: []
+};
+const DEFAULT_JOURNEY_ACHIEVEMENT_STATE = {
+  totals: {
+    started: 0,
+    completed: 0,
+    totalDistanceKm: 0,
+    totalCalories: 0,
+    totalCo2SavedKg: 0
+  },
+  unlocked: {}
+};
+
+function getInitialStats() {
+  if (typeof window === 'undefined' || !window.__ecoRuntimeStats) return { ...DEFAULT_STATS };
+  const runtime = window.__ecoRuntimeStats;
+  return {
+    routesFound: Number(runtime.routesFound || 0),
+    addressesSearched: Number(runtime.addressesSearched || 0),
+    countriesExplored: Array.isArray(runtime.countriesExplored) ? runtime.countriesExplored : []
+  };
+}
+
+function getInitialJourneyAchievementState() {
+  if (typeof window === 'undefined' || !window.__ecoRuntimeJourneyAchievements) {
+    return {
+      totals: { ...DEFAULT_JOURNEY_ACHIEVEMENT_STATE.totals },
+      unlocked: {}
+    };
+  }
+  const runtime = window.__ecoRuntimeJourneyAchievements;
+  return {
+    totals: {
+      started: Number(runtime?.totals?.started || 0),
+      completed: Number(runtime?.totals?.completed || 0),
+      totalDistanceKm: Number(runtime?.totals?.totalDistanceKm || 0),
+      totalCalories: Number(runtime?.totals?.totalCalories || 0),
+      totalCo2SavedKg: Number(runtime?.totals?.totalCo2SavedKg || 0)
+    },
+    unlocked: { ...(runtime?.unlocked || {}) }
+  };
+}
 
 function App() {
   const globeRef = useRef();
@@ -176,16 +221,7 @@ function App() {
     modes: {}
   });
   const journeyModeTokenRef = useRef(0);
-  const [journeyAchievementState, setJourneyAchievementState] = useState({
-    totals: {
-      started: 0,
-      completed: 0,
-      totalDistanceKm: 0,
-      totalCalories: 0,
-      totalCo2SavedKg: 0
-    },
-    unlocked: {}
-  });
+  const [journeyAchievementState, setJourneyAchievementState] = useState(() => getInitialJourneyAchievementState());
   const [journeyAchievementFx, setJourneyAchievementFx] = useState({ id: '', nonce: 0 });
   const journeyUnlockedPrevRef = useRef({});
 
@@ -199,7 +235,7 @@ function App() {
 
 
   // NEW: Achievement Tracking State
-  const [stats, setStats] = useState({ routesFound: 0, addressesSearched: 0, countriesExplored: [] });
+  const [stats, setStats] = useState(() => getInitialStats());
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -208,6 +244,20 @@ function App() {
     sessionStorage.removeItem('eco_journey_achievements');
     window.__ecoTransientResetDone = true;
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.__ecoRuntimeStats = stats;
+    window.__ecoRuntimeJourneyAchievements = journeyAchievementState;
+    window.dispatchEvent(
+      new CustomEvent('eco-runtime-updated', {
+        detail: {
+          stats,
+          journeyAchievementState
+        }
+      })
+    );
+  }, [stats, journeyAchievementState]);
 
   // Helper to trigger achievement progress
   const trackAction = (type, value) => {
@@ -588,6 +638,17 @@ function App() {
       };
     });
   }, [journeyAchievementState]);
+  const coreUnlockedCount = useMemo(() => {
+    let unlocked = 0;
+    if (Number(stats.routesFound || 0) >= 5) unlocked += 1;
+    if (Array.isArray(stats.countriesExplored) && stats.countriesExplored.length >= 3) unlocked += 1;
+    if (Number(stats.addressesSearched || 0) >= 5) unlocked += 1;
+    return unlocked;
+  }, [stats]);
+  const totalUnlockedCount = useMemo(() => {
+    const journeyUnlocked = journeyAchievements.filter(item => item.unlocked).length;
+    return coreUnlockedCount + journeyUnlocked;
+  }, [coreUnlockedCount, journeyAchievements]);
 
   useEffect(() => {
     const prevUnlocked = journeyUnlockedPrevRef.current || {};
@@ -1191,7 +1252,7 @@ function App() {
             <span className="text-sm font-semibold">Achievements</span>
             {/* Badge showing progress */}
             <span className="bg-emerald-500 text-emerald-950 text-[10px] px-1.5 rounded-full">
-              {stats.routesFound + stats.addressesSearched}
+              {totalUnlockedCount}/7
             </span>
           </Link>
         </div>
