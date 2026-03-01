@@ -27,6 +27,7 @@ const TOP_CHUNK_HEIGHT_DEG = ABERDEEN_BOUNDS.north - ABERDEEN_BOUNDS.south;
 const OSM_ABERDEEN_MAX_DISTANCE_DEG = 14;
 const MIN_CAMERA_ALTITUDE = 0.002;
 const ZOOM_DAMPING_START_ALTITUDE = 0.22;
+const COUNTRY_POLYGON_TOGGLE_ALTITUDE = 0.12;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -252,12 +253,21 @@ function App() {
 
   const borderOpacityFromAltitude = altitude => {
     const a = Number.isFinite(altitude) ? altitude : 2.5;
+    if (a < COUNTRY_POLYGON_TOGGLE_ALTITUDE) return 0;
     const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
     return 0.05 + 0.6 * t;
   };
 
+  const fillOpacityFromAltitude = altitude => {
+    const a = Number.isFinite(altitude) ? altitude : 2.5;
+    if (a < COUNTRY_POLYGON_TOGGLE_ALTITUDE) return 0;
+    const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
+    return 0.05 + 0.95 * t;
+  };
+
   const polygonAltitudeFromCamera = altitude => {
     const a = Number.isFinite(altitude) ? altitude : 2.5;
+    if (a < COUNTRY_POLYGON_TOGGLE_ALTITUDE) return 0;
     const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
     return 0.0002 + 0.0118 * t;
   };
@@ -853,13 +863,16 @@ function App() {
     }
   };
 
-  const getCountryColor = countryName => {
+  const getCountryColor = (countryName, zoomOpacity = 1) => {
+    const clampedOpacity = clamp(zoomOpacity, 0, 1);
     const data = countryData[countryName];
-    if (!data) return 'rgba(100,100,100,0.25)';
+    if (!data) return `rgba(100,100,100,${(0.25 * clampedOpacity).toFixed(3)})`;
     const score = Math.min(data.energyUsePerCapitaKgOe || 0, 15000) / 150;
     const hue = 120 - score * 1.2;
-    return `hsla(${hue}, 88%, 58%, 0.74)`;
+    return `hsla(${hue}, 88%, 58%, ${(0.74 * clampedOpacity).toFixed(3)})`;
   };
+
+  const showCountryPolygons = cameraAltitude >= COUNTRY_POLYGON_TOGGLE_ALTITUDE;
 
   return (
     <div className="h-screen bg-emerald-950 text-white flex flex-col overflow-hidden font-sans">
@@ -1004,9 +1017,11 @@ function App() {
             resolveNearestRoad(coords, { fromClick: true });
             pickRoutePoint(coords);
           }}
-          polygonsData={countries}
+          polygonsData={showCountryPolygons ? countries : []}
           polygonGeoJsonGeometry={d => d.geometry}
-          polygonCapColor={d => getCountryColor(d.properties.NAME)}
+          polygonCapColor={d =>
+            getCountryColor(d.properties.NAME, fillOpacityFromAltitude(cameraAltitude))
+          }
           polygonSideColor={() =>
             `rgba(255,255,255,${(borderOpacityFromAltitude(cameraAltitude) * 0.45).toFixed(3)})`
           }
