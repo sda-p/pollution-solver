@@ -139,6 +139,8 @@ npm run dev:backend
 npm run dev:frontend
 ```
 
+Debug overlays (OSM/debug panels) are hidden by default in the globe UI. Press `B` to toggle them on/off.
+
 Production-style backend run:
 
 ```bash

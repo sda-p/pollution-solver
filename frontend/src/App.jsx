@@ -69,7 +69,7 @@ function App() {
   const [countriesByIso3, setCountriesByIso3] = useState(new Map());
   const [showCountryFill, setShowCountryFill] = useState(true);
   const [showCarbonOverlay, setShowCarbonOverlay] = useState(true);
-  const [showDebugGui, setShowDebugGui] = useState(true);
+  const [showDebugGui, setShowDebugGui] = useState(false);
   const [showJourneyPlanner, setShowJourneyPlanner] = useState(true);
 
   const [osmDebug, setOsmDebug] = useState({
