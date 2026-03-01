@@ -1,6 +1,6 @@
 function OsmDebugPanel({ osmDebug }) {
   return (
-    <div className="absolute top-5 right-5 w-80 rounded-2xl border border-white/10 bg-slate-950/75 p-4 text-xs text-slate-100 backdrop-blur-xl">
+    <div className="absolute top-28 right-5 w-80 rounded-2xl border border-white/10 bg-slate-950/75 p-4 text-xs text-slate-100 backdrop-blur-xl">
       <div className="mb-2 text-sm font-semibold text-cyan-200">OSM LoD Debug</div>
       <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px] leading-relaxed text-cyan-100/90">
         <div>pov lat/lng</div>
