@@ -1,65 +1,51 @@
 import express from "express";
 import cors from "cors";
 import { fetchOsmElements } from "./services/osmClient.js";
-import { resolveRoute } from "./services/graphhopperClient.js";
-import { pool } from "./db.js";
+import { fetchPollutionInsights } from "./services/pollutionInsights.service.js";
+import { fetchCarbonMonitorHeatmap } from "./services/carbonMonitor.service.js";
+import { fetchOsmChunkBitmap } from "./services/osmChunk.service.js";
+import { fetchNearestRoadAddress, searchOsmAddresses } from "./services/osmReverse.service.js";
+import { resolveRoute } from "./services/osrmClient.js";
+import { loadLocalEnv } from "./utils/loadEnv.js";
+
+loadLocalEnv();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
-});
+function describeError(error) {
+  if (!error) return "unknown error";
+  if (typeof error.message === "string" && error.message.trim()) return error.message;
+  if (typeof error.code === "string" && error.code.trim()) return `code=${error.code}`;
+  return String(error);
+}
 
 app.get("/insights", async (_req, res) => {
   try {
-    const query = `
-WITH ranked AS (
-  SELECT lat,
-         lng,
-         monthly_emission,
-         max_daily_emission,
-         MAX(monthly_emission) OVER () AS max_monthly
-  FROM carbon_monitor_points
-  WHERE monthly_emission > 0
-  ORDER BY monthly_emission DESC
-  LIMIT 5000
-)
-SELECT lat,
-       lng,
-       monthly_emission,
-       max_daily_emission,
-       CASE
-         WHEN max_monthly IS NULL OR max_monthly = 0 THEN 0.05
-         ELSE GREATEST(0.02, LEAST(0.5, monthly_emission / max_monthly))
-       END AS size
-FROM ranked
-ORDER BY monthly_emission DESC;
-`;
-
-    const result = await pool.query(query);
-    const pollutionPoints = result.rows.map((row) => {
-      const size = Number(row.size);
-      let color = "#66bb6a";
-      if (size >= 0.33) color = "#ef5350";
-      else if (size >= 0.12) color = "#ffb74d";
-
-      return {
-        lat: Number(row.lat),
-        lng: Number(row.lng),
-        size,
-        color,
-        monthlyEmission: Number(row.monthly_emission),
-        maxDailyEmission: Number(row.max_daily_emission),
-      };
-    });
-
-    res.json({ pollutionPoints });
+    const payload = await fetchPollutionInsights();
+    res.json(payload);
   } catch (error) {
-    res.status(500).json({
-      error: "Failed to load pollution insights from database.",
-      details: error.message,
+    console.error("Failed to load pollution insights:", describeError(error));
+    res.status(503).json({
+      error: "Unable to load pollution insights from database.",
+      pollutionPoints: [],
+    });
+  }
+});
+
+app.get("/insights/carbon-monitor", async (req, res) => {
+  try {
+    const payload = await fetchCarbonMonitorHeatmap({
+      stride: req.query.stride,
+      percentile: req.query.percentile,
+    });
+    res.json(payload);
+  } catch (error) {
+    console.error("Failed to load CarbonMonitor heatmap:", describeError(error));
+    res.status(503).json({
+      error: "Unable to load CarbonMonitor heatmap data.",
+      image: null,
     });
   }
 });
@@ -85,6 +71,87 @@ app.post("/osm/features", async (req, res) => {
       highway,
     });
     res.json({ count: elements.length, elements });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get("/osm/chunk", async (req, res) => {
+  try {
+    const south = Number(req.query.south);
+    const west = Number(req.query.west);
+    const north = Number(req.query.north);
+    const east = Number(req.query.east);
+    const lod = typeof req.query.lod === "string" ? req.query.lod : "coarse";
+    const pixelSize = Number(req.query.pixelSize);
+
+    const bbox = [south, west, north, east];
+    if (bbox.some(Number.isNaN)) {
+      res.status(400).json({
+        error: "Invalid bbox. Provide numeric south, west, north, east query params.",
+      });
+      return;
+    }
+    if (south >= north || west >= east) {
+      res.status(400).json({
+        error: "Invalid bbox bounds. Ensure south < north and west < east.",
+      });
+      return;
+    }
+
+    const payload = await fetchOsmChunkBitmap({
+      south,
+      west,
+      north,
+      east,
+      lod,
+      pixelSize: Number.isFinite(pixelSize) ? pixelSize : undefined,
+    });
+    res.json(payload);
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get("/osm/reverse", async (req, res) => {
+  try {
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      res.status(400).json({ error: "Invalid coordinates. Provide numeric lat and lng." });
+      return;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      res.status(400).json({ error: "Coordinates out of range. Expected lat [-90,90], lng [-180,180]." });
+      return;
+    }
+
+    const payload = await fetchNearestRoadAddress({ lat, lng });
+    res.json(payload);
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.get("/osm/search", async (req, res) => {
+  try {
+    const q = typeof req.query.q === "string" ? req.query.q : "";
+    const limit = Number(req.query.limit);
+    const aroundLat = Number(req.query.aroundLat);
+    const aroundLng = Number(req.query.aroundLng);
+
+    if (!q.trim()) {
+      res.status(400).json({ error: "Missing query. Provide q." });
+      return;
+    }
+
+    const payload = await searchOsmAddresses({
+      q,
+      limit: Number.isFinite(limit) ? limit : undefined,
+      aroundLat: Number.isFinite(aroundLat) ? aroundLat : undefined,
+      aroundLng: Number.isFinite(aroundLng) ? aroundLng : undefined,
+    });
+    res.json(payload);
   } catch (error) {
     res.status(502).json({ error: error.message });
   }
