@@ -1,180 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
-import { Link } from 'react-router-dom'; // <--- Add this
-import { Trophy, Globe as GlobeIcon } from 'lucide-react'; // <--- Add this
-import SidebarWidget from './layout/SidebarWidget.jsx';import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, fetchRoute, searchOsmAddress } from './services/mobilityApi';
-
-const ABERDEEN_BOUNDS = {
-  south: 56.85,
-  west: -2.62,
-  north: 57.42,
-  east: -1.72
-};
-const ABERDEEN_CENTER = {
-  lat: (ABERDEEN_BOUNDS.south + ABERDEEN_BOUNDS.north) / 2,
-  lng: (ABERDEEN_BOUNDS.west + ABERDEEN_BOUNDS.east) / 2
-};
-const OSM_ZOOM_ALTITUDE_THRESHOLD = 1.8;
-const OSM_LOD_LEVELS = [
-  { lod: 'coarse', maxRefineAltitude: 1.25, pixelSize: 1536 },
-  { lod: 'medium', maxRefineAltitude: 1.12, pixelSize: 1536 },
-  { lod: 'fine', maxRefineAltitude: 0.68, pixelSize: 2048 }
-];
-const NEXT_LEVEL_CENTER_TRIGGER_FACTOR = 1.15;
-const TOP_CHUNK_WIDTH_DEG = ABERDEEN_BOUNDS.east - ABERDEEN_BOUNDS.west;
-const TOP_CHUNK_HEIGHT_DEG = ABERDEEN_BOUNDS.north - ABERDEEN_BOUNDS.south;
-const OSM_ABERDEEN_MAX_DISTANCE_DEG = 14;
-const MIN_CAMERA_ALTITUDE = 0.002;
-const ZOOM_DAMPING_START_ALTITUDE = 0.22;
-const COUNTRY_POLYGON_TOGGLE_ALTITUDE = 0.12;
-
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-
-const angularDistanceDeg = (lat1, lng1, lat2, lng2) => {
-  const toRad = deg => (deg * Math.PI) / 180;
-  const a1 = toRad(lat1);
-  const b1 = toRad(lng1);
-  const a2 = toRad(lat2);
-  const b2 = toRad(lng2);
-  const cosValue =
-    Math.sin(a1) * Math.sin(a2) + Math.cos(a1) * Math.cos(a2) * Math.cos(b2 - b1);
-  return (Math.acos(clamp(cosValue, -1, 1)) * 180) / Math.PI;
-};
-
-const decodeRgbaTexture = image => {
-  if (!image?.rgbaBase64 || !image?.width || !image?.height) return null;
-  const raw = atob(image.rgbaBase64);
-  const bytes = new Uint8ClampedArray(raw.length);
-  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = image.width;
-  canvas.height = image.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.putImageData(new ImageData(bytes, image.width, image.height), 0, 0);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  texture.flipY = true;
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.minFilter = THREE.NearestFilter;
-  texture.magFilter = THREE.NearestFilter;
-  texture.generateMipmaps = false;
-  return texture;
-};
-
-const chunkCenterDistanceDeg = (lat, lng, chunk) =>
-  angularDistanceDeg(lat, lng, (chunk.south + chunk.north) / 2, (chunk.west + chunk.east) / 2);
-
-const subdivideChunk = chunk => {
-  const midLat = (chunk.south + chunk.north) / 2;
-  const midLng = (chunk.west + chunk.east) / 2;
-  return [
-    { south: chunk.south, west: chunk.west, north: midLat, east: midLng, suffix: 'sw' },
-    { south: chunk.south, west: midLng, north: midLat, east: chunk.east, suffix: 'se' },
-    { south: midLat, west: chunk.west, north: chunk.north, east: midLng, suffix: 'nw' },
-    { south: midLat, west: midLng, north: chunk.north, east: chunk.east, suffix: 'ne' }
-  ];
-};
-
-const mapWithConcurrency = async (items, limit, worker) => {
-  const concurrency = Math.max(1, Math.trunc(limit));
-  const results = new Array(items.length);
-  let cursor = 0;
-
-  const run = async () => {
-    while (cursor < items.length) {
-      const idx = cursor;
-      cursor += 1;
-      try {
-        results[idx] = await worker(items[idx], idx);
-      } catch (error) {
-        results[idx] = { __error: error };
-      }
-    }
-  };
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
-  return results;
-};
-
-const parseTopChunkKey = key => {
-  const [x, y] = String(key || '').split(':').map(Number);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  return { x, y };
-};
-
-const topChunkBounds = ({ x, y }) => {
-  const west = ABERDEEN_BOUNDS.west + x * TOP_CHUNK_WIDTH_DEG;
-  const east = west + TOP_CHUNK_WIDTH_DEG;
-  const south = ABERDEEN_BOUNDS.south + y * TOP_CHUNK_HEIGHT_DEG;
-  const north = south + TOP_CHUNK_HEIGHT_DEG;
-  if (west < -180 || east > 180 || south < -90 || north > 90) return null;
-  return { west, east, south, north };
-};
-
-const buildChunkSpecsFromTopChunks = (topChunkKeys, pov) => {
-  const lat = Number.isFinite(pov?.lat) ? pov.lat : ABERDEEN_CENTER.lat;
-  const lng = Number.isFinite(pov?.lng) ? pov.lng : ABERDEEN_CENTER.lng;
-  const altitude = Number.isFinite(pov?.altitude) ? pov.altitude : 2.5;
-  const specs = [];
-
-  const visit = (chunk, depth, pathPrefix, topKey) => {
-    const level = OSM_LOD_LEVELS[depth];
-    const widthDeg = chunk.east - chunk.west;
-    const heightDeg = chunk.north - chunk.south;
-    const withMeta = {
-      ...chunk,
-      path: pathPrefix,
-      lod: level.lod,
-      pixelSize: level.pixelSize,
-      widthDeg,
-      heightDeg,
-      lat: (chunk.south + chunk.north) / 2,
-      lng: (chunk.west + chunk.east) / 2
-    };
-
-    const hasChildLevel = depth < OSM_LOD_LEVELS.length - 1;
-    const childChunks = hasChildLevel ? subdivideChunk(chunk) : [];
-    const childHalfDiagonalDeg = hasChildLevel
-      ? Math.sqrt(
-          ((childChunks[0].north - childChunks[0].south) / 2) ** 2 +
-            ((childChunks[0].east - childChunks[0].west) / 2) ** 2
-        )
-      : 0;
-    const nearestChildCenterDeg = hasChildLevel
-      ? Math.min(...childChunks.map(child => chunkCenterDistanceDeg(lat, lng, child)))
-      : Number.POSITIVE_INFINITY;
-    const shouldRefine =
-      hasChildLevel &&
-      altitude <= level.maxRefineAltitude &&
-      nearestChildCenterDeg <= childHalfDiagonalDeg * NEXT_LEVEL_CENTER_TRIGGER_FACTOR;
-
-    if (!shouldRefine) {
-      specs.push({
-        ...withMeta,
-        key: `${withMeta.lod}:${topKey}:${pathPrefix}`
-      });
-      return;
-    }
-
-    childChunks.forEach(child => {
-      visit(child, depth + 1, `${pathPrefix}.${child.suffix}`, topKey);
-    });
-  };
-
-  topChunkKeys.forEach(topKey => {
-    const parsed = parseTopChunkKey(topKey);
-    if (!parsed) return;
-    const bounds = topChunkBounds(parsed);
-    if (!bounds) return;
-    visit(bounds, 0, 'root', topKey);
-  });
-
-  return specs;
-};
+import { Link } from 'react-router-dom';
+import { Trophy } from 'lucide-react';
+import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, fetchRoute, searchOsmAddress } from './services/mobilityApi';
+import {
+  ABERDEEN_BOUNDS,
+  ABERDEEN_CENTER,
+  COUNTRY_POLYGON_TOGGLE_ALTITUDE,
+  OSM_ABERDEEN_MAX_DISTANCE_DEG,
+  OSM_LOD_LEVELS,
+  OSM_ZOOM_ALTITUDE_THRESHOLD,
+  TOP_CHUNK_HEIGHT_DEG,
+  TOP_CHUNK_WIDTH_DEG
+} from './features/globe/constants';
+import {
+  angularDistanceDeg,
+  applyLogZoomDamping,
+  borderOpacityFromAltitude,
+  buildChunkSpecsFromTopChunks,
+  clamp,
+  decodeRgbaTexture,
+  fillOpacityFromAltitude,
+  mapWithConcurrency,
+  overlayOpacityFromAltitude,
+  polygonAltitudeFromCamera
+} from './features/globe/utils';
+import AddressSearchPanel from './features/globe/components/AddressSearchPanel';
+import CountrySidebar from './features/globe/components/CountrySidebar';
+import GlobeInfoPanel from './features/globe/components/GlobeInfoPanel';
+import LayerTogglesPanel from './features/globe/components/LayerTogglesPanel';
+import NearestRoadPanel from './features/globe/components/NearestRoadPanel';
+import OsmDebugPanel from './features/globe/components/OsmDebugPanel';
+import RouteTracePanel from './features/globe/components/RouteTracePanel';
 
 function App() {
   const globeRef = useRef();
@@ -246,57 +104,6 @@ function App() {
     awaiting: 'from',
     geojson: null
   });
-
-  const overlayOpacityFromAltitude = altitude => {
-    const a = Number.isFinite(altitude) ? altitude : 2.5;
-    const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
-    return 0.08 + 0.74 * t;
-  };
-
-  const borderOpacityFromAltitude = altitude => {
-    const a = Number.isFinite(altitude) ? altitude : 2.5;
-    if (a < COUNTRY_POLYGON_TOGGLE_ALTITUDE) return 0;
-    const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
-    return 0.05 + 0.6 * t;
-  };
-
-  const fillOpacityFromAltitude = altitude => {
-    const a = Number.isFinite(altitude) ? altitude : 2.5;
-    if (a < COUNTRY_POLYGON_TOGGLE_ALTITUDE) return 0;
-    const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
-    return 0.05 + 0.95 * t;
-  };
-
-  const polygonAltitudeFromCamera = altitude => {
-    const a = Number.isFinite(altitude) ? altitude : 2.5;
-    if (a < COUNTRY_POLYGON_TOGGLE_ALTITUDE) return 0;
-    const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
-    return 0.0002 + 0.0118 * t;
-  };
-
-  const applyLogZoomDamping = pov => {
-    const globe = globeRef.current;
-    const controls = globe?.controls?.();
-    if (!controls || !globe) return Number.isFinite(pov?.altitude) ? pov.altitude : cameraAltitude;
-
-    const radius = globe.getGlobeRadius?.() || 100;
-    controls.minDistance = radius * (1 + MIN_CAMERA_ALTITUDE);
-
-    const altitude = Number.isFinite(pov?.altitude) ? pov.altitude : cameraAltitude;
-    const clampedAltitude = Math.max(MIN_CAMERA_ALTITUDE, altitude);
-
-    const span = Math.max(0.00001, ZOOM_DAMPING_START_ALTITUDE - MIN_CAMERA_ALTITUDE);
-    const normalized = clamp((clampedAltitude - MIN_CAMERA_ALTITUDE) / span, 0, 1);
-    const logScaled = Math.log10(1 + 9 * normalized);
-    controls.zoomSpeed = 0.004 + 0.52 * logScaled;
-
-    if (altitude < MIN_CAMERA_ALTITUDE) {
-      const currentPov = globe.pointOfView?.() || {};
-      globe.pointOfView({ ...currentPov, altitude: MIN_CAMERA_ALTITUDE }, 0);
-    }
-
-    return clampedAltitude;
-  };
 
   const updateCameraAltitudeFromPov = pov => {
     if (Number.isFinite(pov?.altitude)) {
@@ -981,7 +788,11 @@ function App() {
           }}
           onGlobeReady={() => {
             const pov = globeRef.current?.pointOfView?.();
-            const dampedAltitude = applyLogZoomDamping(pov);
+            const dampedAltitude = applyLogZoomDamping({
+              globe: globeRef.current,
+              pov,
+              fallbackAltitude: cameraAltitude
+            });
             const altitude = updateCameraAltitudeFromPov({ ...pov, altitude: dampedAltitude });
             if (carbonOverlayMaterialRef.current) {
               carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
@@ -989,7 +800,11 @@ function App() {
             scheduleOsmOverlayUpdate(pov);
           }}
           onZoom={pov => {
-            const dampedAltitude = applyLogZoomDamping(pov);
+            const dampedAltitude = applyLogZoomDamping({
+              globe: globeRef.current,
+              pov,
+              fallbackAltitude: cameraAltitude
+            });
             const altitude = updateCameraAltitudeFromPov({ ...pov, altitude: dampedAltitude });
             if (carbonOverlayMaterialRef.current) {
               carbonOverlayMaterialRef.current.opacity = overlayOpacityFromAltitude(altitude);
@@ -1052,224 +867,30 @@ function App() {
           }}
         />
 
-        <div className="pointer-events-none absolute top-5 left-5 rounded-2xl border border-emerald-400/30 bg-emerald-950/70 p-4 backdrop-blur-xl">
-          <h2 className="text-lg font-semibold text-emerald-50">Global Emissions Globe</h2>
-          <p className="text-xs text-emerald-300/80">Carbon bitmap + OSM LoD overlays enabled</p>
-        </div>
-
-        <div className="absolute right-5 top-[19rem] w-64 rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 text-sm font-semibold text-emerald-200">Layer Toggles</div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowCountryFill(prev => !prev)}
-              className={`rounded-lg border px-3 py-1.5 font-semibold transition-colors ${
-                showCountryFill
-                  ? 'border-emerald-300/60 bg-emerald-700/50 text-emerald-50 hover:bg-emerald-600/60'
-                  : 'border-slate-500/60 bg-slate-700/50 text-slate-200 hover:bg-slate-600/60'
-              }`}
-            >
-              Country Fill: {showCountryFill ? 'On' : 'Off'}
-            </button>
-            <button
-              onClick={() => setShowCarbonOverlay(prev => !prev)}
-              className={`rounded-lg border px-3 py-1.5 font-semibold transition-colors ${
-                showCarbonOverlay
-                  ? 'border-cyan-300/60 bg-cyan-700/50 text-cyan-50 hover:bg-cyan-600/60'
-                  : 'border-slate-500/60 bg-slate-700/50 text-slate-200 hover:bg-slate-600/60'
-              }`}
-            >
-              Carbon: {showCarbonOverlay ? 'On' : 'Off'}
-            </button>
-          </div>
-        </div>
-
-        <div className="absolute top-5 right-5 w-80 rounded-2xl border border-white/10 bg-slate-950/75 p-4 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 text-sm font-semibold text-cyan-200">OSM LoD Debug</div>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px] leading-relaxed text-cyan-100/90">
-            <div>pov lat/lng</div>
-            <div>{osmDebug.lat.toFixed(2)}, {osmDebug.lng.toFixed(2)}</div>
-            <div>altitude</div>
-            <div>{osmDebug.altitude.toFixed(3)}</div>
-            <div>overlay active</div>
-            <div>{osmDebug.active ? 'yes' : 'no'}</div>
-            <div>requested</div>
-            <div>{osmDebug.requested}</div>
-            <div>visible</div>
-            <div>{osmDebug.visible}</div>
-            <div>lod c/m/f</div>
-            <div>{osmDebug.coarse}/{osmDebug.medium}/{osmDebug.fine}</div>
-            <div>cache ready</div>
-            <div>{osmDebug.cacheReady ? 'yes' : 'no'}</div>
-            <div>cache size</div>
-            <div>{osmDebug.cacheSize}</div>
-            <div>last fetch</div>
-            <div>{osmDebug.fetchMs} ms</div>
-            <div>failed</div>
-            <div>{osmDebug.failed}</div>
-            <div>status</div>
-            <div>{osmDebug.loading ? 'loading' : 'idle'}</div>
-          </div>
-          <div className="mt-2 truncate font-mono text-[11px] text-rose-200/90">error: {osmDebug.error || '-'}</div>
-        </div>
-
-        <div className="absolute top-36 left-5 w-[min(30rem,calc(100vw-2.5rem))] rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 text-sm font-semibold text-emerald-200">Address Search</div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={addressSearch.q}
-              onChange={event => {
-                const next = event.target.value;
-                setAddressSearch(prev => ({ ...prev, q: next }));
-              }}
-              onKeyDown={event => {
-                if (event.key === 'ArrowDown') {
-                  event.preventDefault();
-                  setAddressSearch(prev => ({
-                    ...prev,
-                    selectedIdx:
-                      prev.options.length === 0
-                        ? -1
-                        : Math.min(prev.selectedIdx + 1, prev.options.length - 1)
-                  }));
-                } else if (event.key === 'ArrowUp') {
-                  event.preventDefault();
-                  setAddressSearch(prev => ({
-                    ...prev,
-                    selectedIdx: prev.options.length === 0 ? -1 : Math.max(prev.selectedIdx - 1, 0)
-                  }));
-                } else if (event.key === 'Enter') {
-                  event.preventDefault();
-                  goToSearchSelection();
-                }
-              }}
-              placeholder="Type an address..."
-              className="flex-1 rounded-xl border border-cyan-300/40 bg-slate-900/95 px-3 py-2 text-cyan-50 outline-none transition-colors focus:border-cyan-200"
-            />
-            <button
-              onClick={goToSearchSelection}
-              disabled={addressSearch.options.length === 0}
-              className="rounded-xl border border-cyan-200/60 px-4 py-2 font-semibold text-cyan-50 transition-colors disabled:cursor-default disabled:border-slate-500/40 disabled:bg-slate-700/40 disabled:text-slate-300 enabled:bg-cyan-700/70 enabled:hover:bg-cyan-600/80"
-            >
-              Go
-            </button>
-          </div>
-          <div className="mt-2 font-mono text-[11px] text-cyan-100/90">status: {addressSearch.loading ? 'searching...' : 'idle'}</div>
-          <div className="mt-2 max-h-36 overflow-y-auto rounded-xl border border-cyan-300/20 bg-slate-900/80">
-            {addressSearch.options.length === 0 ? (
-              <div className="px-3 py-2 text-cyan-100/70">
-                {addressSearch.q.trim().length < 3 ? 'Type at least 3 characters' : 'No matches'}
-              </div>
-            ) : (
-              addressSearch.options.map((item, idx) => (
-                <button
-                  key={`${item.osmType || 'osm'}-${item.osmId || idx}-${idx}`}
-                  onClick={() => setAddressSearch(prev => ({ ...prev, selectedIdx: idx }))}
-                  className={`w-full border-b border-cyan-300/15 px-3 py-2 text-left font-mono text-[11px] text-cyan-50 last:border-b-0 ${
-                    idx === addressSearch.selectedIdx ? 'bg-cyan-700/45' : 'bg-transparent hover:bg-cyan-900/35'
-                  }`}
-                >
-                  <div className="truncate">{item.displayName}</div>
-                </button>
-              ))
-            )}
-          </div>
-          <div className="mt-2 truncate font-mono text-[11px] text-rose-200/90">error: {addressSearch.error || '-'}</div>
-        </div>
-
-        <div className="pointer-events-none absolute bottom-5 right-5 w-[min(27rem,calc(100vw-2.5rem))] rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 text-sm font-semibold text-cyan-100">Nearest OSM Road</div>
-          <div className="space-y-1 font-mono text-[11px] text-cyan-100/90">
-            <div>coords: {Number.isFinite(osmLookup.lat) ? osmLookup.lat.toFixed(5) : '-'}, {Number.isFinite(osmLookup.lng) ? osmLookup.lng.toFixed(5) : '-'}</div>
-            <div>status: {osmLookup.loading ? 'resolving...' : 'idle'}</div>
-            <div className="truncate">road: {osmLookup.addressLine || '-'}</div>
-            <div className="truncate">locality: {[osmLookup.locality, osmLookup.country].filter(Boolean).join(', ') || '-'}</div>
-            <div className="truncate">label: {osmLookup.displayName || '-'}</div>
-            <div className="truncate text-rose-200/90">error: {osmLookup.error || '-'}</div>
-          </div>
-        </div>
-
-        <div className="absolute bottom-5 left-5 w-[min(26rem,calc(100vw-2.5rem))] rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-xs text-slate-100 backdrop-blur-xl">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-semibold text-amber-100">Route Trace (OSRM)</div>
-            <button
-              onClick={clearRouteSelection}
-              className="rounded-lg border border-amber-200/40 px-2 py-1 text-[11px] font-semibold text-amber-100 hover:bg-amber-800/25"
-            >
-              Reset
-            </button>
-          </div>
-          <div className="space-y-1 font-mono text-[11px] text-amber-100/90">
-            <div>
-              from: {routeState.from ? `${routeState.from.lat.toFixed(5)}, ${routeState.from.lng.toFixed(5)}` : '-'}
-            </div>
-            <div>
-              to: {routeState.to ? `${routeState.to.lat.toFixed(5)}, ${routeState.to.lng.toFixed(5)}` : '-'}
-            </div>
-            <div>status: {routeState.loading ? 'routing...' : `click ${routeState.awaiting}`}</div>
-            <div>distance: {Number.isFinite(routeState.distanceKm) ? `${routeState.distanceKm.toFixed(2)} km` : '-'}</div>
-            <div>duration: {Number.isFinite(routeState.durationMin) ? `${routeState.durationMin.toFixed(1)} min` : '-'}</div>
-            <div className="truncate text-rose-200/90">error: {routeState.error || '-'}</div>
-          </div>
-        </div>
+        <GlobeInfoPanel />
+        <LayerTogglesPanel
+          showCountryFill={showCountryFill}
+          showCarbonOverlay={showCarbonOverlay}
+          onToggleCountryFill={() => setShowCountryFill(prev => !prev)}
+          onToggleCarbonOverlay={() => setShowCarbonOverlay(prev => !prev)}
+        />
+        <OsmDebugPanel osmDebug={osmDebug} />
+        <AddressSearchPanel
+          addressSearch={addressSearch}
+          setAddressSearch={setAddressSearch}
+          goToSearchSelection={goToSearchSelection}
+        />
+        <NearestRoadPanel osmLookup={osmLookup} />
+        <RouteTracePanel
+          routeState={routeState}
+          clearRouteSelection={clearRouteSelection}
+        />
       </div>
-
-      <div
-        className={`fixed top-24 left-0 h-[calc(100vh-6rem)] w-[400px] bg-emerald-950/95 backdrop-blur-md border-r border-emerald-500/30 shadow-2xl z-50 overflow-y-auto transition-transform duration-500 ease-in-out ${
-          selectedCountry ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        <div className="p-8">
-          <button
-            onClick={() => setSelectedCountry(null)}
-            className="absolute top-6 right-6 p-2 rounded-full hover:bg-emerald-800/50 transition-colors text-emerald-400"
-          >
-            ✕
-          </button>
-
-          {selectedCountry && (
-            <div className="animate-in fade-in slide-in-from-left-4 duration-500">
-              <h2 className="text-4xl font-bold text-emerald-50 mb-1">{selectedCountry}</h2>
-              <p className="text-emerald-400/80 mb-6 text-sm font-medium">Regional Mobility Analysis</p>
-
-              {countryData[selectedCountry] ? (
-                <div className="space-y-6 mb-8">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-emerald-900/30 rounded-2xl border border-emerald-800/50">
-                      <div className="text-emerald-400 text-xs uppercase font-bold tracking-tighter">Energy Use / Capita</div>
-                      <div className="text-2xl font-bold text-red-400 mt-1">
-                        {Number.isFinite(countryData[selectedCountry].energyUsePerCapitaKgOe)
-                          ? countryData[selectedCountry].energyUsePerCapitaKgOe.toFixed(2)
-                          : '-'}
-                      </div>
-                      <div className="mt-1 text-[10px] text-emerald-300/80">
-                        {countryData[selectedCountry].energyUseYear || '-'} • kg oil eq.
-                      </div>
-                    </div>
-                    <div className="p-4 bg-emerald-900/30 rounded-2xl border border-emerald-800/50">
-                      <div className="text-emerald-400 text-xs uppercase font-bold tracking-tighter">Primary Energy PPP</div>
-                      <div className="text-2xl font-bold text-orange-400 mt-1">
-                        {Number.isFinite(countryData[selectedCountry].primaryEnergyPerPppKd)
-                          ? countryData[selectedCountry].primaryEnergyPerPppKd.toFixed(3)
-                          : '-'}
-                      </div>
-                      <div className="mt-1 text-[10px] text-emerald-300/80">
-                        {countryData[selectedCountry].primaryEnergyYear || '-'} • indicator scale
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 bg-emerald-900/20 rounded-xl mb-8 border border-emerald-800/30 text-emerald-400/60 italic text-sm">
-                  Basic data loaded. Select a major hub for detailed transport metrics.
-                </div>
-              )}
-
-              <SidebarWidget location={selectedCountry} countryMetrics={countryData[selectedCountry]} />
-            </div>
-          )}
-        </div>
-      </div>
+      <CountrySidebar
+        selectedCountry={selectedCountry}
+        setSelectedCountry={setSelectedCountry}
+        countryData={countryData}
+      />
     </div>
   );
 }
