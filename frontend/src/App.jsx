@@ -29,7 +29,7 @@ import {
 import AddressSearchPanel from './features/globe/components/AddressSearchPanel';
 import CountrySidebar from './features/globe/components/CountrySidebar';
 import GlobeInfoPanel from './features/globe/components/GlobeInfoPanel';
-import LayerTogglesPanel from './features/globe/components/LayerTogglesPanel';
+import VisualLayersPanel from './features/globe/components/VisualLayersPanel';
 import NearestRoadPanel from './features/globe/components/NearestRoadPanel';
 import OsmDebugPanel from './features/globe/components/OsmDebugPanel';
 import JourneyPlannerSidebar from './features/globe/components/JourneyPlannerSidebar';
@@ -1454,7 +1454,7 @@ function App() {
         {showDebugGui ? (
           <>
             <GlobeInfoPanel />
-            <LayerTogglesPanel
+            <VisualLayersPanel
               showCountryFill={showCountryFill}
               showCarbonOverlay={showCarbonOverlay}
               onToggleCountryFill={() => setShowCountryFill(prev => !prev)}
