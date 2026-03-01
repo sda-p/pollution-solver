@@ -37,9 +37,13 @@ function JourneyPlannerSidebar({
     <>
       <button
         onClick={() => setIsOpen(prev => !prev)}
-        className="fixed right-5 top-28 z-50 rounded-xl border border-cyan-300/40 bg-slate-950/85 px-3 py-2 text-xs font-semibold text-cyan-100 backdrop-blur-xl hover:bg-slate-900/90"
+        aria-label={isOpen ? 'Collapse journey planner' : 'Expand journey planner'}
+        title={isOpen ? 'Collapse journey planner' : 'Expand journey planner'}
+        className={`fixed top-1/2 z-50 h-14 w-10 -translate-y-1/2 rounded-l-xl border border-emerald-400/40 bg-emerald-950/92 text-2xl font-semibold text-emerald-100 backdrop-blur-xl transition-all duration-500 hover:bg-emerald-900/95 ${
+          isOpen ? 'right-[400px]' : 'right-0'
+        }`}
       >
-        {isOpen ? 'Hide Journey Planner' : 'Show Journey Planner'}
+        {isOpen ? '-' : '+'}
       </button>
       <div
         className={`fixed right-0 top-24 h-[calc(100vh-6rem)] w-[400px] bg-emerald-950/95 backdrop-blur-md border-l border-emerald-500/30 shadow-2xl z-40 overflow-y-auto transition-transform duration-500 ease-in-out ${
