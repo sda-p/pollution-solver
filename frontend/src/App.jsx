@@ -193,6 +193,8 @@ function App() {
   const [countryData, setCountryData] = useState({});
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [countriesByIso3, setCountriesByIso3] = useState(new Map());
+  const [showCountryFill, setShowCountryFill] = useState(true);
+  const [showCarbonOverlay, setShowCarbonOverlay] = useState(true);
 
   const [osmDebug, setOsmDebug] = useState({
     altitude: 2.5,
@@ -432,10 +434,11 @@ function App() {
   }, [insights, countriesByIso3]);
 
   const carbonOverlayData = useMemo(() => {
+    if (!showCarbonOverlay) return [];
     const texture = decodeRgbaTexture(carbonBitmap);
     if (!texture) return [];
     return [{ texture, layerType: 'carbon-overlay' }];
-  }, [carbonBitmap]);
+  }, [carbonBitmap, showCarbonOverlay]);
 
   const routePathData = useMemo(() => {
     const geometry = routeState.geojson;
@@ -1020,7 +1023,10 @@ function App() {
           polygonsData={showCountryPolygons ? countries : []}
           polygonGeoJsonGeometry={d => d.geometry}
           polygonCapColor={d =>
-            getCountryColor(d.properties.NAME, fillOpacityFromAltitude(cameraAltitude))
+            getCountryColor(
+              d.properties.NAME,
+              showCountryFill ? fillOpacityFromAltitude(cameraAltitude) : 0
+            )
           }
           polygonSideColor={() =>
             `rgba(255,255,255,${(borderOpacityFromAltitude(cameraAltitude) * 0.45).toFixed(3)})`
@@ -1049,6 +1055,32 @@ function App() {
         <div className="pointer-events-none absolute top-5 left-5 rounded-2xl border border-emerald-400/30 bg-emerald-950/70 p-4 backdrop-blur-xl">
           <h2 className="text-lg font-semibold text-emerald-50">Global Emissions Globe</h2>
           <p className="text-xs text-emerald-300/80">Carbon bitmap + OSM LoD overlays enabled</p>
+        </div>
+
+        <div className="absolute right-5 top-[19rem] w-64 rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-xs text-slate-100 backdrop-blur-xl">
+          <div className="mb-2 text-sm font-semibold text-emerald-200">Layer Toggles</div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowCountryFill(prev => !prev)}
+              className={`rounded-lg border px-3 py-1.5 font-semibold transition-colors ${
+                showCountryFill
+                  ? 'border-emerald-300/60 bg-emerald-700/50 text-emerald-50 hover:bg-emerald-600/60'
+                  : 'border-slate-500/60 bg-slate-700/50 text-slate-200 hover:bg-slate-600/60'
+              }`}
+            >
+              Country Fill: {showCountryFill ? 'On' : 'Off'}
+            </button>
+            <button
+              onClick={() => setShowCarbonOverlay(prev => !prev)}
+              className={`rounded-lg border px-3 py-1.5 font-semibold transition-colors ${
+                showCarbonOverlay
+                  ? 'border-cyan-300/60 bg-cyan-700/50 text-cyan-50 hover:bg-cyan-600/60'
+                  : 'border-slate-500/60 bg-slate-700/50 text-slate-200 hover:bg-slate-600/60'
+              }`}
+            >
+              Carbon: {showCarbonOverlay ? 'On' : 'Off'}
+            </button>
+          </div>
         </div>
 
         <div className="absolute top-5 right-5 w-80 rounded-2xl border border-white/10 bg-slate-950/75 p-4 text-xs text-slate-100 backdrop-blur-xl">
