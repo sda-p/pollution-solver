@@ -30,6 +30,14 @@ npm install
 npm --prefix frontend install
 ```
 
+Frontend runtime dependencies are managed in `frontend/package.json`. Key ones used by the app include:
+
+- `react`
+- `react-dom`
+- `react-router-dom` (required by `frontend/src/main.jsx` for routing)
+- `react-globe.gl`
+- `three`
+
 2. Create environment file:
 
 ```bash

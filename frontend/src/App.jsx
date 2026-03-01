@@ -259,7 +259,7 @@ function App() {
   const polygonAltitudeFromCamera = altitude => {
     const a = Number.isFinite(altitude) ? altitude : 2.5;
     const t = Math.max(0, Math.min(1, (a - 0.15) / 1.75));
-    return 0.0002 + 0.0018 * t;
+    return 0.0002 + 0.0118 * t;
   };
 
   const applyLogZoomDamping = pov => {
@@ -949,7 +949,7 @@ function App() {
           pathTransitionDuration={0}
           customLayerData={carbonOverlayData}
           customThreeObject={layer => {
-            const radius = (globeRef.current?.getGlobeRadius?.() || 100) * 1.0008;
+            const radius = (globeRef.current?.getGlobeRadius?.() || 100) * 1.018;
             const geometry = new THREE.SphereGeometry(radius, 96, 96);
             const material = new THREE.MeshBasicMaterial({
               map: layer.texture,
