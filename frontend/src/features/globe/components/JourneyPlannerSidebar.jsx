@@ -6,9 +6,12 @@ function JourneyPlannerSidebar({
   setIsOpen,
   routeState,
   journeyModeStats,
+  journeyAchievements,
+  journeyAchievementFx,
   journeyLookup,
-  setRouteState,
   setRouteEndpoint,
+  onJourneyStart,
+  onJourneyComplete,
   clearRouteSelection
 }) {
   const hasJourney = Boolean(routeState.from && routeState.to);
@@ -35,16 +38,51 @@ function JourneyPlannerSidebar({
   const [destinationLoading, setDestinationLoading] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
   const [destinationOpen, setDestinationOpen] = useState(false);
+  const [selectedMode, setSelectedMode] = useState('');
   const [journeySimulationStep, setJourneySimulationStep] = useState('start');
   const [journeyButtonFx, setJourneyButtonFx] = useState('idle');
   const startTokenRef = useRef(0);
   const destinationTokenRef = useRef(0);
+  const journeyActionLockRef = useRef(false);
+  const achievementIconRefs = useRef({});
+  const [achievementFlyOverlay, setAchievementFlyOverlay] = useState(null);
+  const modeSelectionLocked = journeySimulationStep === 'complete' || journeyButtonFx !== 'idle';
 
   useEffect(() => {
     if (!hasJourney) {
       setJourneySimulationStep('start');
     }
   }, [hasJourney]);
+
+  useEffect(() => {
+    if (!journeyAchievementFx?.id || !journeyAchievementFx?.nonce) return;
+    if (typeof window === 'undefined') return;
+
+    const unlocked = (journeyAchievements || []).find(a => a.id === journeyAchievementFx.id);
+    const icon = unlocked?.icon || '🏆';
+
+    const sourceEl = achievementIconRefs.current[journeyAchievementFx.id];
+    const sourceRect = sourceEl?.getBoundingClientRect?.();
+    const hasSource = sourceRect && Number.isFinite(sourceRect.left) && Number.isFinite(sourceRect.top);
+    const sx = hasSource ? sourceRect.left + sourceRect.width / 2 : window.innerWidth - 180;
+    const sy = hasSource ? sourceRect.top + sourceRect.height / 2 : window.innerHeight * 0.35;
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+
+    setAchievementFlyOverlay({
+      key: `${journeyAchievementFx.id}:${journeyAchievementFx.nonce}`,
+      icon,
+      sx,
+      sy,
+      cx,
+      cy,
+      ex: sx,
+      ey: sy
+    });
+
+    const timer = setTimeout(() => setAchievementFlyOverlay(null), 1300);
+    return () => clearTimeout(timer);
+  }, [journeyAchievementFx?.id, journeyAchievementFx?.nonce]);
 
   useEffect(() => {
     const q = startInput.trim();
@@ -256,16 +294,24 @@ function JourneyPlannerSidebar({
                 <button
                   onClick={() => {
                     if (!hasJourney || journeyButtonFx !== 'idle') return;
+                    if (journeySimulationStep === 'start' && !selectedMode) return;
+                    if (journeyActionLockRef.current) return;
+                    journeyActionLockRef.current = true;
                     setJourneyButtonFx('out');
+                    const currentStep = journeySimulationStep;
+                    const nextStep = currentStep === 'start' ? 'complete' : 'start';
+                    if (currentStep === 'start') onJourneyStart?.();
+                    if (currentStep === 'complete') onJourneyComplete?.(selectedMode);
                     setTimeout(() => {
-                      setJourneySimulationStep(prev => (prev === 'start' ? 'complete' : 'start'));
+                      setJourneySimulationStep(nextStep);
                       setJourneyButtonFx('in');
                       setTimeout(() => {
                         setJourneyButtonFx('idle');
+                        journeyActionLockRef.current = false;
                       }, 260);
                     }, 320);
                   }}
-                  disabled={!hasJourney || journeyButtonFx !== 'idle'}
+                  disabled={!hasJourney || journeyButtonFx !== 'idle' || (journeySimulationStep === 'start' && !selectedMode)}
                   style={{
                     animation:
                       journeyButtonFx === 'out'
@@ -286,6 +332,9 @@ function JourneyPlannerSidebar({
                   onClick={() => {
                     setStartInput('');
                     setDestinationInput('');
+                    setJourneySimulationStep('start');
+                    setJourneyButtonFx('idle');
+                    journeyActionLockRef.current = false;
                     clearRouteSelection();
                   }}
                   title="Reset Journey"
@@ -308,11 +357,25 @@ function JourneyPlannerSidebar({
             </div>
             <div className="grid gap-3">
               {modeCards.map(mode => (
-                <div
+                <button
                   key={mode.id}
-                  className="rounded-2xl border border-emerald-800/50 bg-emerald-900/30 p-4"
+                  onClick={() => {
+                    if (modeSelectionLocked) return;
+                    setSelectedMode(mode.id);
+                  }}
+                  disabled={modeSelectionLocked}
+                  className={`w-full rounded-2xl border p-4 text-left transition-all ${
+                    selectedMode === mode.id
+                      ? 'border-emerald-300/70 bg-emerald-500/20 ring-1 ring-emerald-300/30'
+                      : 'border-emerald-800/50 bg-emerald-900/30'
+                  } ${modeSelectionLocked ? 'cursor-default opacity-90' : 'hover:bg-emerald-800/35'}`}
                 >
-                  <div className={`text-sm font-semibold ${mode.color}`}>{mode.title}</div>
+                  <div className="flex items-center justify-between">
+                    <div className={`text-sm font-semibold ${mode.color}`}>{mode.title}</div>
+                    <div className={`text-xs font-semibold ${selectedMode === mode.id ? 'text-lime-200' : 'text-emerald-300/70'}`}>
+                      {selectedMode === mode.id ? 'Selected' : 'Select'}
+                    </div>
+                  </div>
                   {!hasJourney ? (
                     <div className="mt-2 text-xs text-emerald-200/60">
                       Add start and destination to view stats.
@@ -357,6 +420,50 @@ function JourneyPlannerSidebar({
                       </div>
                     </div>
                   )}
+                </button>
+              ))}
+            </div>
+
+            <div className="mb-3 mt-5 text-xs font-semibold uppercase tracking-widest text-emerald-300/80">
+              Journey Achievements
+            </div>
+            <div className="grid gap-3">
+              {(journeyAchievements || []).map(achievement => (
+                <div
+                  key={achievement.id}
+                  className={`rounded-2xl border p-3 transition-all duration-300 ${
+                    achievement.unlocked
+                      ? 'border-emerald-400/50 bg-emerald-400/20'
+                      : 'border-emerald-900/50 bg-emerald-900/20'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span
+                      ref={el => {
+                        achievementIconRefs.current[achievement.id] = el;
+                      }}
+                      style={{
+                        animation:
+                          journeyAchievementFx?.id === achievement.id
+                            ? 'achievementFlyIn 1100ms cubic-bezier(0.12, 0.8, 0.18, 1)'
+                            : undefined
+                      }}
+                      className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-xl ${
+                        achievement.unlocked ? 'bg-emerald-200/20' : 'bg-emerald-950/50'
+                      }`}
+                    >
+                      {achievement.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-sm font-semibold ${achievement.unlocked ? 'text-emerald-100' : 'text-emerald-300/75'}`}>
+                        {achievement.title}
+                      </div>
+                      <div className="text-[11px] text-emerald-200/70">{achievement.desc}</div>
+                    </div>
+                    <div className={`text-[11px] font-mono ${achievement.unlocked ? 'text-lime-200' : 'text-emerald-300/70'}`}>
+                      {achievement.progress}
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -387,7 +494,49 @@ function JourneyPlannerSidebar({
           from { opacity: 0.25; }
           to { opacity: 1; }
         }
+        @keyframes achievementFlyIn {
+          0% { opacity: 0; transform: scale(0.2) rotate(1260deg); }
+          35% { opacity: 1; transform: scale(1.22) rotate(420deg); }
+          60% { transform: scale(0.96) rotate(150deg); }
+          82% { transform: scale(1.04) rotate(40deg); }
+          100% { opacity: 1; transform: scale(1) rotate(0deg); }
+        }
+        @keyframes achievementFlyOverlay {
+          0% {
+            transform: translate3d(var(--sx, 0px), var(--sy, 0px), 0) scale(0.8) rotate(0deg);
+            opacity: 0.85;
+          }
+          45% {
+            transform: translate3d(var(--cx, 0px), var(--cy, 0px), 0) scale(2.35) rotate(1080deg);
+            opacity: 1;
+          }
+          100% {
+            transform: translate3d(var(--ex, 0px), var(--ey, 0px), 0) scale(1) rotate(1440deg);
+            opacity: 0.95;
+          }
+        }
       `}</style>
+      {achievementFlyOverlay ? (
+        <span
+          key={achievementFlyOverlay.key}
+          style={{
+            '--sx': `${achievementFlyOverlay.sx}px`,
+            '--sy': `${achievementFlyOverlay.sy}px`,
+            '--cx': `${achievementFlyOverlay.cx}px`,
+            '--cy': `${achievementFlyOverlay.cy}px`,
+            '--ex': `${achievementFlyOverlay.ex}px`,
+            '--ey': `${achievementFlyOverlay.ey}px`
+          }}
+          className="pointer-events-none fixed left-0 top-0 z-[120] inline-block text-5xl"
+        >
+          <span
+            className="inline-block"
+            style={{ animation: 'achievementFlyOverlay 1.25s cubic-bezier(0.12, 0.8, 0.18, 1) forwards' }}
+          >
+            {achievementFlyOverlay.icon}
+          </span>
+        </span>
+      ) : null}
     </>
   );
 }

@@ -48,6 +48,40 @@ const AVG_SPEED_KMH = {
   driving: 50
 };
 const FOOD_CO2_KG_PER_KCAL = 0.001;
+const JOURNEY_ACHIEVEMENT_DEFS = [
+  {
+    id: 'journey_starter',
+    title: 'Journey Starter',
+    desc: 'Start 1 planned journey',
+    icon: '🚀',
+    metricKey: 'started',
+    target: 1
+  },
+  {
+    id: 'distance_tracker',
+    title: 'Distance Tracker',
+    desc: 'Accumulate 100 km planned',
+    icon: '🧭',
+    metricKey: 'totalDistanceKm',
+    target: 100
+  },
+  {
+    id: 'calorie_builder',
+    title: 'Calorie Builder',
+    desc: 'Accumulate 3000 active kcal',
+    icon: '🔥',
+    metricKey: 'totalCalories',
+    target: 3000
+  },
+  {
+    id: 'carbon_cutter',
+    title: 'Carbon Cutter',
+    desc: 'Save 10 kg CO2 vs driving',
+    icon: '🌿',
+    metricKey: 'totalCo2SavedKg',
+    target: 10
+  }
+];
 
 function App() {
   const globeRef = useRef();
@@ -142,6 +176,18 @@ function App() {
     modes: {}
   });
   const journeyModeTokenRef = useRef(0);
+  const [journeyAchievementState, setJourneyAchievementState] = useState({
+    totals: {
+      started: 0,
+      completed: 0,
+      totalDistanceKm: 0,
+      totalCalories: 0,
+      totalCo2SavedKg: 0
+    },
+    unlocked: {}
+  });
+  const [journeyAchievementFx, setJourneyAchievementFx] = useState({ id: '', nonce: 0 });
+  const journeyUnlockedPrevRef = useRef({});
 
   const updateCameraAltitudeFromPov = pov => {
     if (Number.isFinite(pov?.altitude)) {
@@ -153,15 +199,15 @@ function App() {
 
 
   // NEW: Achievement Tracking State
-  const [stats, setStats] = useState(() => {
-    const saved = localStorage.getItem('eco_stats');
-    return saved ? JSON.parse(saved) : { routesFound: 0, addressesSearched: 0, countriesExplored: [] };
-  });
+  const [stats, setStats] = useState({ routesFound: 0, addressesSearched: 0, countriesExplored: [] });
 
-  // Update localStorage whenever stats change
   useEffect(() => {
-    localStorage.setItem('eco_stats', JSON.stringify(stats));
-  }, [stats]);
+    if (typeof window === 'undefined') return;
+    if (window.__ecoTransientResetDone) return;
+    localStorage.removeItem('eco_stats');
+    sessionStorage.removeItem('eco_journey_achievements');
+    window.__ecoTransientResetDone = true;
+  }, []);
 
   // Helper to trigger achievement progress
   const trackAction = (type, value) => {
@@ -525,6 +571,99 @@ function App() {
       });
     });
   }, [routeState.from, routeState.to, routeState.distanceKm]);
+
+  const journeyAchievements = useMemo(() => {
+    const totals = journeyAchievementState.totals || {};
+    const unlocked = journeyAchievementState.unlocked || {};
+    return JOURNEY_ACHIEVEMENT_DEFS.map(def => {
+      const value = Number(totals[def.metricKey] || 0);
+      return {
+        ...def,
+        value,
+        unlocked: Boolean(unlocked[def.id]),
+        progress:
+          def.metricKey === 'totalDistanceKm' || def.metricKey === 'totalCo2SavedKg'
+            ? `${value.toFixed(1)}/${def.target}`
+            : `${Math.round(value)}/${def.target}`
+      };
+    });
+  }, [journeyAchievementState]);
+
+  useEffect(() => {
+    const prevUnlocked = journeyUnlockedPrevRef.current || {};
+    const nextUnlocked = journeyAchievementState.unlocked || {};
+    const newest = JOURNEY_ACHIEVEMENT_DEFS.find(
+      def => nextUnlocked[def.id] && !prevUnlocked[def.id]
+    );
+    journeyUnlockedPrevRef.current = nextUnlocked;
+    if (newest) {
+      setJourneyAchievementFx(prev => ({ id: newest.id, nonce: prev.nonce + 1 }));
+    }
+  }, [journeyAchievementState.unlocked]);
+
+  const issueJourneyAchievements = (selectedMode) => {
+    const modes = journeyModeStats?.modes || {};
+    const modeKey = typeof selectedMode === 'string' ? selectedMode : '';
+    const selected = modes[modeKey] || {};
+    const driving = modes.driving || {};
+
+    const distanceKm = Number.isFinite(selected.distanceKm)
+      ? selected.distanceKm
+      : (Number.isFinite(routeState.distanceKm) ? routeState.distanceKm : 0);
+    const calories = Number.isFinite(selected.calories) ? selected.calories : 0;
+    const selectedCo2 = Number.isFinite(selected.co2Kg) ? selected.co2Kg : null;
+    const co2Saved = Number.isFinite(driving.co2Kg) && Number.isFinite(selectedCo2)
+      ? Math.max(0, driving.co2Kg - selectedCo2)
+      : 0;
+
+    setJourneyAchievementState(prev => {
+      const nextTotals = {
+        started: Number(prev.totals?.started || 0),
+        completed: Number(prev.totals?.completed || 0) + 1,
+        totalDistanceKm: Number(prev.totals?.totalDistanceKm || 0) + (Number.isFinite(distanceKm) ? distanceKm : 0),
+        totalCalories: Number(prev.totals?.totalCalories || 0) + (Number.isFinite(calories) ? calories : 0),
+        totalCo2SavedKg: Number(prev.totals?.totalCo2SavedKg || 0) + (Number.isFinite(co2Saved) ? co2Saved : 0)
+      };
+      const nextUnlocked = { ...(prev.unlocked || {}) };
+
+      JOURNEY_ACHIEVEMENT_DEFS.forEach(def => {
+        const value = Number(nextTotals[def.metricKey] || 0);
+        if (!nextUnlocked[def.id] && value >= def.target) {
+          nextUnlocked[def.id] = true;
+        }
+      });
+
+      return {
+        totals: nextTotals,
+        unlocked: nextUnlocked
+      };
+    });
+  };
+
+  const issueJourneyStartAchievement = () => {
+    setJourneyAchievementState(prev => {
+      const nextTotals = {
+        started: Number(prev.totals?.started || 0) + 1,
+        completed: Number(prev.totals?.completed || 0),
+        totalDistanceKm: Number(prev.totals?.totalDistanceKm || 0),
+        totalCalories: Number(prev.totals?.totalCalories || 0),
+        totalCo2SavedKg: Number(prev.totals?.totalCo2SavedKg || 0)
+      };
+      const nextUnlocked = { ...(prev.unlocked || {}) };
+
+      JOURNEY_ACHIEVEMENT_DEFS.forEach(def => {
+        const value = Number(nextTotals[def.metricKey] || 0);
+        if (!nextUnlocked[def.id] && value >= def.target) {
+          nextUnlocked[def.id] = true;
+        }
+      });
+
+      return {
+        totals: nextTotals,
+        unlocked: nextUnlocked
+      };
+    });
+  };
 
   useEffect(() => {
     return () => {
@@ -1253,9 +1392,12 @@ function App() {
         setIsOpen={setShowJourneyPlanner}
         routeState={routeState}
         journeyModeStats={journeyModeStats}
+        journeyAchievements={journeyAchievements}
+        journeyAchievementFx={journeyAchievementFx}
         journeyLookup={journeyLookup}
-        setRouteState={setRouteState}
         setRouteEndpoint={setRouteEndpoint}
+        onJourneyStart={issueJourneyStartAchievement}
+        onJourneyComplete={issueJourneyAchievements}
         clearRouteSelection={clearRouteSelection}
       />
     </div>
