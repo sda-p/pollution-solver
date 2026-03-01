@@ -124,6 +124,71 @@ Datasets currently ingested into `world_bank_indicator_values`:
 - `API_EG.EGY.PRIM.PP.KD_DS2_en_xml_v2_21105.xml` (`EG.EGY.PRIM.PP.KD`)
 - `OWID_CB_CO2_PER_UNIT_ENERGY.csv` (`OWID_CB_CO2_PER_UNIT_ENERGY`)
 
+## Dataset Attribution And Download
+
+Place all dataset files in `./datasets` (project root: `pollution-solver/datasets`).
+
+Important:
+
+- All but one of the source downloads come archived.
+- Unarchive downloaded files into `./datasets` before ingestion.
+- `OWID_CB_CO2_PER_UNIT_ENERGY.csv` is used directly as a CSV.
+
+### 1) Annual CO2 emissions per unit energy (kg per kWh)
+
+- Indicator: `OWID_CB_CO2_PER_UNIT_ENERGY`
+- Description: Annual total CO2 emissions (excluding land-use change), in kg per kWh of primary energy consumption.
+- Source: Carbon Brief Emission Data via Our World in Data (OWID), distributed via World Bank Data360
+- License: `CC BY 4.0`
+- URL: <https://data360.worldbank.org/en/indicator/OWID_CB_CO2_PER_UNIT_ENERGY?view=datatable&average=WLD>
+- Expected file in `./datasets`: `OWID_CB_CO2_PER_UNIT_ENERGY.csv`
+
+### 2) Energy intensity level of primary energy (MJ/$2021 PPP GDP)
+
+- Indicator: `EG.EGY.PRIM.PP.KD`
+- Source context: Tracking SDG 7: The Energy Progress Report (IEA, IRENA, UN, World Bank, WHO)
+- License: `CC BY 4.0`
+- URL: <https://data.worldbank.org/indicator/EG.EGY.PRIM.PP.KD?end=2022&start=2000&view=chart>
+- Download from World Bank and extract into `./datasets`.
+- Expected extracted file in `./datasets`: `API_EG.EGY.PRIM.PP.KD_DS2_en_xml_v2_21105.xml`
+
+### 3) Energy use (kg of oil equivalent per capita)
+
+- Indicator: `EG.USE.PCAP.KG.OE`
+- Source: IEA Energy Statistics Data Browser (via World Bank indicator distribution)
+- License: `CC BY 4.0`
+- URL: <https://data.worldbank.org/indicator/EG.USE.PCAP.KG.OE>
+- Download from World Bank and extract into `./datasets`.
+- Expected extracted file in `./datasets`: `API_EG.USE.PCAP.KG.OE_DS2_en_xml_v2_3115.xml`
+
+### 4) Global gRidded dAily CO2 Emissions Dataset (GRACED)
+
+- Source: Carbon Monitor GRACED
+- License: `CC BY 4.0`
+- URL: <https://carbonmonitor-graced.com/>
+- Place the archive in `./datasets` as `carbon-monitor-graced.gz` and extract the NetCDF used by the API.
+- Expected extracted NetCDF in `./datasets`: `CarbonMonitor_total_y2024_m12.nc`
+
+### Quick setup checklist
+
+1. Download each dataset from the links above.
+2. Copy downloaded archives/CSV into `./datasets`.
+3. Extract archives so the required `.xml` and `.nc` files exist in `./datasets`.
+4. Verify required files exist:
+
+```bash
+ls -1 datasets/API_EG.EGY.PRIM.PP.KD_DS2_en_xml_v2_21105.xml \
+      datasets/API_EG.USE.PCAP.KG.OE_DS2_en_xml_v2_3115.xml \
+      datasets/OWID_CB_CO2_PER_UNIT_ENERGY.csv \
+      datasets/CarbonMonitor_total_y2024_m12.nc
+```
+
+5. Run ingestion:
+
+```bash
+npm run db:ingest
+```
+
 ## Run the app
 
 Run backend + frontend together:
