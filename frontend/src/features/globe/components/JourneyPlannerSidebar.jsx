@@ -35,8 +35,16 @@ function JourneyPlannerSidebar({
   const [destinationLoading, setDestinationLoading] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
   const [destinationOpen, setDestinationOpen] = useState(false);
+  const [journeySimulationStep, setJourneySimulationStep] = useState('start');
+  const [journeyButtonFx, setJourneyButtonFx] = useState('idle');
   const startTokenRef = useRef(0);
   const destinationTokenRef = useRef(0);
+
+  useEffect(() => {
+    if (!hasJourney) {
+      setJourneySimulationStep('start');
+    }
+  }, [hasJourney]);
 
   useEffect(() => {
     const q = startInput.trim();
@@ -247,27 +255,44 @@ function JourneyPlannerSidebar({
               <div className="flex gap-2">
                 <button
                   onClick={() => {
+                    if (!hasJourney || journeyButtonFx !== 'idle') return;
+                    setJourneyButtonFx('out');
+                    setTimeout(() => {
+                      setJourneySimulationStep(prev => (prev === 'start' ? 'complete' : 'start'));
+                      setJourneyButtonFx('in');
+                      setTimeout(() => {
+                        setJourneyButtonFx('idle');
+                      }, 260);
+                    }, 320);
+                  }}
+                  disabled={!hasJourney || journeyButtonFx !== 'idle'}
+                  style={{
+                    animation:
+                      journeyButtonFx === 'out'
+                        ? 'journeyShake 320ms ease-in-out, journeyFadeOut 320ms ease forwards'
+                        : journeyButtonFx === 'in'
+                          ? 'journeyFadeIn 260ms ease forwards'
+                          : undefined
+                  }}
+                  className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-default disabled:border-slate-500/40 disabled:bg-slate-700/40 disabled:text-slate-300 ${
+                    journeySimulationStep === 'start'
+                      ? 'border-lime-300/70 bg-lime-500 text-emerald-950 hover:bg-lime-400'
+                      : 'border-teal-200/70 bg-teal-300 text-teal-950 hover:bg-teal-200'
+                  }`}
+                >
+                  {journeySimulationStep === 'start' ? 'Start Planned Journey' : 'Complete Journey'}
+                </button>
+                <button
+                  onClick={() => {
                     setStartInput('');
                     setDestinationInput('');
                     clearRouteSelection();
                   }}
-                  className="rounded-lg border border-amber-200/40 px-3 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-800/25"
+                  title="Reset Journey"
+                  aria-label="Reset Journey"
+                  className="w-9 rounded-lg border border-amber-200/40 px-0 py-1.5 text-center text-sm font-semibold text-amber-100 hover:bg-amber-800/25"
                 >
-                  Reset Journey
-                </button>
-                <button
-                  onClick={() =>
-                    setRouteState(prev => ({
-                      ...prev,
-                      from: null,
-                      to: null,
-                      awaiting: 'from',
-                      error: ''
-                    }))
-                  }
-                  className="rounded-lg border border-cyan-200/40 px-3 py-1.5 text-xs font-semibold text-cyan-100 hover:bg-cyan-800/25"
-                >
-                  Set New Start
+                  ⟳
                 </button>
               </div>
             </div>
@@ -345,6 +370,24 @@ function JourneyPlannerSidebar({
           </div>
         </div>
       </div>
+      <style>{`
+        @keyframes journeyShake {
+          0% { transform: translateX(0); }
+          20% { transform: translateX(-3px); }
+          40% { transform: translateX(3px); }
+          60% { transform: translateX(-2px); }
+          80% { transform: translateX(2px); }
+          100% { transform: translateX(0); }
+        }
+        @keyframes journeyFadeOut {
+          from { opacity: 1; }
+          to { opacity: 0.25; }
+        }
+        @keyframes journeyFadeIn {
+          from { opacity: 0.25; }
+          to { opacity: 1; }
+        }
+      `}</style>
     </>
   );
 }
