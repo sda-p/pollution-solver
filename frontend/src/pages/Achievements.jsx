@@ -1,6 +1,7 @@
 import { Leaf, MapPinned, Route, Search, Sparkles, Trophy } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { getInitialLeaderboardState } from '../features/achievements/leaderboardRuntime';
 
 const journeyAchievementDefs = [
   { id: 'journey_starter', title: 'Journey Starter', desc: 'Start 1 planned journey', icon: '🚀', target: 1, metricKey: 'started' },
@@ -25,7 +26,9 @@ function getRuntimeState() {
     },
     unlocked: {}
   };
-  return { stats, journey };
+  const leaderboard =
+    (typeof window !== 'undefined' && window.__ecoRuntimeLeaderboard) || getInitialLeaderboardState();
+  return { stats, journey, leaderboard };
 }
 
 export default function Achievements() {
@@ -36,9 +39,11 @@ export default function Achievements() {
     const onRuntimeUpdated = event => {
       const nextStats = event?.detail?.stats || window.__ecoRuntimeStats;
       const nextJourney = event?.detail?.journeyAchievementState || window.__ecoRuntimeJourneyAchievements;
+      const nextLeaderboard = event?.detail?.leaderboardState || window.__ecoRuntimeLeaderboard || getInitialLeaderboardState();
       setRuntimeState({
         stats: nextStats || getRuntimeState().stats,
-        journey: nextJourney || getRuntimeState().journey
+        journey: nextJourney || getRuntimeState().journey,
+        leaderboard: nextLeaderboard
       });
     };
     window.addEventListener('eco-runtime-updated', onRuntimeUpdated);
@@ -48,7 +53,7 @@ export default function Achievements() {
     };
   }, []);
 
-  const { stats, journey } = runtimeState;
+  const { stats, journey, leaderboard } = runtimeState;
 
   const coreAchievements = [
     {
@@ -104,6 +109,9 @@ export default function Achievements() {
             </div>
             <Link to="/" className="btn btn-ghost border border-emerald-500/30 text-emerald-400">
               Back to Globe
+            </Link>
+            <Link to="/leaderboard" className="btn border-emerald-400/40 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25">
+              Leaderboard #{leaderboard?.userRank || '-'}
             </Link>
           </div>
         </div>

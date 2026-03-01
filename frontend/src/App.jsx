@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Trophy } from 'lucide-react';
 import { API_BASE_URL, fetchOsmChunk, fetchOsmReverse, fetchRoute, searchOsmAddress } from './services/mobilityApi';
 import {
@@ -33,6 +33,7 @@ import LayerTogglesPanel from './features/globe/components/LayerTogglesPanel';
 import NearestRoadPanel from './features/globe/components/NearestRoadPanel';
 import OsmDebugPanel from './features/globe/components/OsmDebugPanel';
 import JourneyPlannerSidebar from './features/globe/components/JourneyPlannerSidebar';
+import { getInitialLeaderboardState, updateLeaderboardState } from './features/achievements/leaderboardRuntime';
 
 const MODE_PROFILES = ['walking', 'cycling', 'driving'];
 const DRIVING_FUEL_L_PER_100KM = 7.4;
@@ -129,6 +130,7 @@ function getInitialJourneyAchievementState() {
 }
 
 function App() {
+  const navigate = useNavigate();
   const globeRef = useRef();
   const carbonOverlayMaterialRef = useRef(null);
   const osmTileCacheRef = useRef(new Map());
@@ -222,6 +224,8 @@ function App() {
   });
   const journeyModeTokenRef = useRef(0);
   const [journeyAchievementState, setJourneyAchievementState] = useState(() => getInitialJourneyAchievementState());
+  const [leaderboardState, setLeaderboardState] = useState(() => getInitialLeaderboardState());
+  const leaderboardPrevRankRef = useRef(Number(leaderboardState?.userRank || 11));
   const [journeyAchievementFx, setJourneyAchievementFx] = useState({ id: '', nonce: 0 });
   const journeyUnlockedPrevRef = useRef({});
 
@@ -249,15 +253,38 @@ function App() {
     if (typeof window === 'undefined') return;
     window.__ecoRuntimeStats = stats;
     window.__ecoRuntimeJourneyAchievements = journeyAchievementState;
+    window.__ecoRuntimeLeaderboard = leaderboardState;
     window.dispatchEvent(
       new CustomEvent('eco-runtime-updated', {
         detail: {
           stats,
-          journeyAchievementState
+          journeyAchievementState,
+          leaderboardState
         }
       })
     );
-  }, [stats, journeyAchievementState]);
+  }, [stats, journeyAchievementState, leaderboardState]);
+
+  useEffect(() => {
+    const userKm = Number(journeyAchievementState?.totals?.totalDistanceKm || 0);
+    setLeaderboardState(prev => updateLeaderboardState(prev, userKm));
+  }, [journeyAchievementState?.totals?.totalDistanceKm]);
+
+  useEffect(() => {
+    const prevRank = Number(leaderboardPrevRankRef.current || 11);
+    const nextRank = Number(leaderboardState?.userRank || 11);
+    if (
+      nextRank === 1 &&
+      prevRank !== 1 &&
+      typeof window !== 'undefined' &&
+      !window.__ecoLeaderboardTopTriggered
+    ) {
+      window.__ecoLeaderboardTopTriggered = true;
+      window.__ecoLeaderboardConfettiPending = true;
+      navigate('/leaderboard');
+    }
+    leaderboardPrevRankRef.current = nextRank;
+  }, [leaderboardState?.userRank, navigate]);
 
   // Helper to trigger achievement progress
   const trackAction = (type, value) => {
