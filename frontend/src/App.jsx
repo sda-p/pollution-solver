@@ -34,6 +34,21 @@ import NearestRoadPanel from './features/globe/components/NearestRoadPanel';
 import OsmDebugPanel from './features/globe/components/OsmDebugPanel';
 import JourneyPlannerSidebar from './features/globe/components/JourneyPlannerSidebar';
 
+const MODE_PROFILES = ['walking', 'cycling', 'driving'];
+const DRIVING_FUEL_L_PER_100KM = 7.4;
+const GASOLINE_CO2_KG_PER_L = 2.31;
+const CALORIES_PER_KM = {
+  walking: 60,
+  cycling: 30,
+  driving: 0
+};
+const AVG_SPEED_KMH = {
+  walking: 5,
+  cycling: 18,
+  driving: 50
+};
+const FOOD_CO2_KG_PER_KCAL = 0.001;
+
 function App() {
   const globeRef = useRef();
   const carbonOverlayMaterialRef = useRef(null);
@@ -121,6 +136,12 @@ function App() {
       error: ''
     }
   });
+  const [journeyModeStats, setJourneyModeStats] = useState({
+    loading: false,
+    error: '',
+    modes: {}
+  });
+  const journeyModeTokenRef = useRef(0);
 
   const updateCameraAltitudeFromPov = pov => {
     if (Number.isFinite(pov?.altitude)) {
@@ -390,6 +411,97 @@ function App() {
       }
     ];
   }, [routeState.geojson]);
+
+  useEffect(() => {
+    const from = routeState.from;
+    const to = routeState.to;
+    if (!from || !to) {
+      setJourneyModeStats({ loading: false, error: '', modes: {} });
+      return;
+    }
+
+    const token = journeyModeTokenRef.current + 1;
+    journeyModeTokenRef.current = token;
+    setJourneyModeStats(prev => ({ ...prev, loading: true, error: '' }));
+
+    const fallbackDistanceKm = Number.isFinite(routeState.distanceKm) ? routeState.distanceKm : null;
+
+    Promise.all(
+      MODE_PROFILES.map(async profile => {
+        try {
+          const payload = await fetchRoute({
+            fromLat: from.lat,
+            fromLng: from.lng,
+            toLat: to.lat,
+            toLng: to.lng,
+            profile
+          });
+          const route = payload?.routes?.[0];
+          const distanceKm = Number(route?.distance) / 1000;
+          const speedKmh = AVG_SPEED_KMH[profile];
+          const durationMin =
+            Number.isFinite(distanceKm) && Number.isFinite(speedKmh) && speedKmh > 0
+              ? (distanceKm / speedKmh) * 60
+              : null;
+          return {
+            profile,
+            distanceKm: Number.isFinite(distanceKm) ? distanceKm : fallbackDistanceKm,
+            durationMin,
+            error: ''
+          };
+        } catch (error) {
+          const speedKmh = AVG_SPEED_KMH[profile];
+          const durationMin =
+            Number.isFinite(fallbackDistanceKm) && Number.isFinite(speedKmh) && speedKmh > 0
+              ? (fallbackDistanceKm / speedKmh) * 60
+              : null;
+          return {
+            profile,
+            distanceKm: fallbackDistanceKm,
+            durationMin,
+            error: error?.message || `route unavailable for ${profile}`
+          };
+        }
+      })
+    ).then(results => {
+      if (token !== journeyModeTokenRef.current) return;
+
+      const modes = {};
+      let combinedError = '';
+      results.forEach(result => {
+        const distanceKm = Number(result.distanceKm);
+        const calories =
+          Number.isFinite(distanceKm) && CALORIES_PER_KM[result.profile] > 0
+            ? Math.round(distanceKm * CALORIES_PER_KM[result.profile])
+            : null;
+        const fuelLiters =
+          result.profile === 'driving' && Number.isFinite(distanceKm)
+            ? distanceKm * (DRIVING_FUEL_L_PER_100KM / 100)
+            : null;
+        const co2Kg =
+          result.profile === 'driving'
+            ? (Number.isFinite(fuelLiters) ? fuelLiters * GASOLINE_CO2_KG_PER_L : null)
+            : (Number.isFinite(calories) ? calories * FOOD_CO2_KG_PER_KCAL : null);
+
+        modes[result.profile] = {
+          distanceKm: Number.isFinite(distanceKm) ? distanceKm : null,
+          durationMin: Number.isFinite(result.durationMin) ? result.durationMin : null,
+          calories,
+          fuelLiters: Number.isFinite(fuelLiters) ? fuelLiters : null,
+          co2Kg: Number.isFinite(co2Kg) ? co2Kg : null,
+          error: result.error || ''
+        };
+
+        if (result.error && !combinedError) combinedError = result.error;
+      });
+
+      setJourneyModeStats({
+        loading: false,
+        error: combinedError,
+        modes
+      });
+    });
+  }, [routeState.from, routeState.to, routeState.distanceKm]);
 
   useEffect(() => {
     return () => {
@@ -1108,6 +1220,7 @@ function App() {
         isOpen={showJourneyPlanner}
         setIsOpen={setShowJourneyPlanner}
         routeState={routeState}
+        journeyModeStats={journeyModeStats}
         journeyLookup={journeyLookup}
         setRouteState={setRouteState}
         setRouteEndpoint={setRouteEndpoint}

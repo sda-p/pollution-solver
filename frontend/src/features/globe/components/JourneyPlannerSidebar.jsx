@@ -5,6 +5,7 @@ function JourneyPlannerSidebar({
   isOpen,
   setIsOpen,
   routeState,
+  journeyModeStats,
   journeyLookup,
   setRouteState,
   setRouteEndpoint,
@@ -24,6 +25,7 @@ function JourneyPlannerSidebar({
   const toLookup = journeyLookup?.to || {};
   const startValue = fromLookup.addressLine || formatPoint(routeState.from);
   const destinationValue = toLookup.addressLine || formatPoint(routeState.to);
+  const selectedDistanceKm = Number(routeState.distanceKm);
 
   const [startInput, setStartInput] = useState('');
   const [destinationInput, setDestinationInput] = useState('');
@@ -273,6 +275,12 @@ function JourneyPlannerSidebar({
             <div className="mb-3 text-xs font-semibold uppercase tracking-widest text-emerald-300/80">
               Mode Comparison
             </div>
+            <div className="mb-2 rounded-xl border border-emerald-700/40 bg-emerald-900/20 px-3 py-2 text-xs text-emerald-100/90">
+              Selected journey distance:{' '}
+              <span className="font-mono text-amber-200">
+                {Number.isFinite(selectedDistanceKm) ? `${selectedDistanceKm.toFixed(2)} km` : '-'}
+              </span>
+            </div>
             <div className="grid gap-3">
               {modeCards.map(mode => (
                 <div
@@ -280,13 +288,48 @@ function JourneyPlannerSidebar({
                   className="rounded-2xl border border-emerald-800/50 bg-emerald-900/30 p-4"
                 >
                   <div className={`text-sm font-semibold ${mode.color}`}>{mode.title}</div>
-                  {hasJourney ? (
-                    <div className="mt-2 text-xs text-emerald-100/90">
-                      Metrics coming soon.
-                    </div>
-                  ) : (
+                  {!hasJourney ? (
                     <div className="mt-2 text-xs text-emerald-200/60">
                       Add start and destination to view stats.
+                    </div>
+                  ) : (
+                    <div className="mt-2 space-y-1 text-xs text-emerald-100/90">
+                      <div>
+                        distance:{' '}
+                        <span className="font-mono text-amber-200">
+                          {Number.isFinite(journeyModeStats?.modes?.[mode.id]?.distanceKm)
+                            ? `${journeyModeStats.modes[mode.id].distanceKm.toFixed(2)} km`
+                            : '-'}
+                        </span>
+                      </div>
+                      <div>
+                        duration:{' '}
+                        <span className="font-mono text-amber-200">
+                          {Number.isFinite(journeyModeStats?.modes?.[mode.id]?.durationMin)
+                            ? `${journeyModeStats.modes[mode.id].durationMin.toFixed(1)} min`
+                            : '-'}
+                        </span>
+                      </div>
+                      <div>
+                        {mode.id === 'driving' ? 'fuel' : 'calories'}:{' '}
+                        <span className="font-mono text-amber-200">
+                          {mode.id === 'driving'
+                            ? (Number.isFinite(journeyModeStats?.modes?.[mode.id]?.fuelLiters)
+                                ? `${journeyModeStats.modes[mode.id].fuelLiters.toFixed(2)} L`
+                                : '-')
+                            : (Number.isFinite(journeyModeStats?.modes?.[mode.id]?.calories)
+                                ? `${journeyModeStats.modes[mode.id].calories} kcal`
+                                : '-')}
+                        </span>
+                      </div>
+                      <div>
+                        CO2 emissions:{' '}
+                        <span className="font-mono text-amber-200">
+                          {Number.isFinite(journeyModeStats?.modes?.[mode.id]?.co2Kg)
+                            ? `${journeyModeStats.modes[mode.id].co2Kg.toFixed(2)} kg`
+                            : '-'}
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -294,10 +337,10 @@ function JourneyPlannerSidebar({
             </div>
 
             <div className="mt-4 text-xs font-mono text-emerald-200/80">
-              status: {routeState.loading ? 'routing...' : `click ${routeState.awaiting}`}
+              status: {routeState.loading || journeyModeStats?.loading ? 'routing...' : `click ${routeState.awaiting}`}
             </div>
             <div className="mt-1 text-xs font-mono text-rose-200/90">
-              error: {routeState.error || '-'}
+              error: {routeState.error || journeyModeStats?.error || '-'}
             </div>
           </div>
         </div>
