@@ -5,7 +5,7 @@ function VisualLayersPanel({
   onToggleCarbonOverlay
 }) {
   return (
-    <div className="absolute right-5 top-5 z-50 w-64 rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-xs text-slate-100 backdrop-blur-xl">
+    <div className="absolute bottom-5 left-5 z-50 w-64 rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-xs text-slate-100 backdrop-blur-xl">
       <div className="mb-2 text-sm font-semibold text-emerald-200">Visual Layers</div>
       <div className="flex flex-wrap gap-2">
         <button
